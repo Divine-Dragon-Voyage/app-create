@@ -1,16 +1,144 @@
+const fs = require('fs');
+const path = require('path');
+const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 
-// Default delay (ms), increase this if VPS is slow
+// 默认延迟（毫秒），如果 VPS 较慢可适当增大
 const DELAY = 3000;
 
-function getAppName() {
-    const d = new Date();
-    return d.getFullYear().toString() +
-        String(d.getMonth() + 1).padStart(2, '0') +
-        String(d.getDate()).padStart(2, '0') +
-        String(d.getHours()).padStart(2, '0') +
-        String(d.getMinutes()).padStart(2, '0') +
-        String(d.getSeconds()).padStart(2, '0');
+const APP_NAME_HEADER_CANDIDATES = new Set([
+    '应用名称',
+    '应用名',
+    'appname',
+    'applicationname'
+]);
+
+const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
+    '应用包名',
+    '包名',
+    'apppackagename',
+    'packagename',
+    'applicationid'
+]);
+
+const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+
+function normalizeHeader(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_-]/g, '');
+}
+
+function parseCliArgs() {
+    const args = process.argv.slice(2);
+    let inputFileArg;
+
+    if (args.length > 1) {
+        throw new Error('Usage: node create_app.js [excel_file_path]');
+    }
+
+    if (args.length === 1) {
+        inputFileArg = args[0];
+    }
+
+    return { inputFileArg };
+}
+
+function resolveInputExcelFile(inputFileArg) {
+    if (inputFileArg) {
+        const explicitPath = path.resolve(process.cwd(), inputFileArg);
+        if (!fs.existsSync(explicitPath)) {
+            throw new Error(`Excel file not found: ${explicitPath}`);
+        }
+        return explicitPath;
+    }
+
+    const excelFiles = fs.readdirSync(process.cwd())
+        .filter(name => ['.xlsx', '.xls'].includes(path.extname(name).toLowerCase()))
+        .sort();
+
+    if (!excelFiles.length) {
+        throw new Error(
+            'No Excel file found in project root. Put one .xlsx/.xls file here, or pass path: node create_app.js ./apps.xlsx'
+        );
+    }
+
+    return path.resolve(process.cwd(), excelFiles[0]);
+}
+
+function pickHeader(headers, candidates) {
+    for (const header of headers) {
+        if (candidates.has(normalizeHeader(header))) {
+            return header;
+        }
+    }
+    return null;
+}
+
+function loadTasksFromExcel(filePath) {
+    const workbook = XLSX.readFile(filePath);
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+        throw new Error(`No sheet found in Excel file: ${filePath}`);
+    }
+
+    const sheet = workbook.Sheets[firstSheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+    if (!rows.length) {
+        throw new Error(`Excel sheet "${firstSheetName}" has no data rows.`);
+    }
+
+    const headers = Object.keys(rows[0]);
+    const appNameHeader = pickHeader(headers, APP_NAME_HEADER_CANDIDATES);
+    const packageNameHeader = pickHeader(headers, PACKAGE_NAME_HEADER_CANDIDATES);
+
+    if (!appNameHeader || !packageNameHeader) {
+        throw new Error(
+            `Missing required columns. Found headers: ${headers.join(', ')}. ` +
+            'Need columns like: 应用名称 / 应用包名 (or App Name / App Package Name).'
+        );
+    }
+
+    const tasks = [];
+
+    rows.forEach((row, idx) => {
+        const excelRowNumber = idx + 2; // Excel 行号（从 1 开始，包含表头）
+        const appName = String(row[appNameHeader] || '').trim();
+        const rawPackageName = String(row[packageNameHeader] || '').trim();
+        const packageName = rawPackageName.toLowerCase();
+
+        if (!appName && !packageName) {
+            return;
+        }
+
+        if (!appName || !packageName) {
+            throw new Error(`Row ${excelRowNumber}: both app name and package name are required.`);
+        }
+
+        if (appName.length > 30) {
+            throw new Error(`Row ${excelRowNumber}: app name exceeds 30 chars (${appName.length}).`);
+        }
+
+        if (!PACKAGE_NAME_REGEX.test(packageName)) {
+            throw new Error(
+                `Row ${excelRowNumber}: invalid package name "${rawPackageName}". ` +
+                'Expected format like "com.example.appname" (lowercase letters/numbers/underscore).'
+            );
+        }
+
+        tasks.push({
+            appName,
+            packageName,
+            rowNumber: excelRowNumber
+        });
+    });
+
+    if (!tasks.length) {
+        throw new Error(`No valid rows found in sheet "${firstSheetName}".`);
+    }
+
+    return { tasks, sheetName: firstSheetName };
 }
 
 function formatDuration(totalSeconds) {
@@ -28,7 +156,18 @@ async function delay(page, ms = DELAY) {
     await page.waitForTimeout(ms);
 }
 
-// Global retry wrapper for UI interactions
+async function waitForEnabled(locator, timeoutMs = 15000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        if (await locator.isEnabled().catch(() => false)) {
+            return true;
+        }
+        await new Promise(r => setTimeout(r, 500));
+    }
+    return false;
+}
+
+// 全局重试包装器，用于 UI 交互
 async function retryAction(action, label = 'action', retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
@@ -43,20 +182,21 @@ async function retryAction(action, label = 'action', retries = 3) {
 
 async function waitSaved(page) {
     console.log('Waiting for save confirmation...');
-    // Fuzzy match various "saved" hints (case-insensitive)
+    // 宽松匹配各种 “saved” 提示（不区分大小写）
     try {
         await page.locator('text=/saved/i').first().waitFor({ state: 'visible', timeout: 30000 });
         console.log('Save detected.');
     } catch (e) {
         console.log('Save confirmation timeout, continuing...');
     }
-    await delay(page, 5000); // Give extra time for backend processing after saving
+    await delay(page, 5000); // 保存后额外等待，给后端处理留时间
 }
 
-async function runOnce() {
+async function runOnce(task) {
     const startTime = Date.now();
-    const name = getAppName();
-    console.log('Creating:', name);
+    const appName = task.appName;
+    const packageName = task.packageName;
+    console.log(`Creating app. Name="${appName}", Package="${packageName}"`);
 
     let browser;
     try {
@@ -69,9 +209,9 @@ async function runOnce() {
         }
 
         await page.bringToFront();
-        page.setDefaultTimeout(60000); // Set global default timeout to 60 seconds
+        page.setDefaultTimeout(60000); // 设置页面全局超时为 60 秒
 
-        // Go directly to the app list page, skipping account selection
+        // 直接进入应用列表页，跳过账号选择
         const DEV_URL = 'https://play.google.com/console/u/0/developers/5719511147760424406';
         await page.goto(DEV_URL + '/app-list', { timeout: 90000, waitUntil: 'domcontentloaded' });
         await delay(page, 8000);
@@ -83,20 +223,44 @@ async function runOnce() {
         }, 'Click Create App button');
         await delay(page, 10000);
 
-        // Fill App name
-        console.log('Filling App name:', name);
-        const nameInput = page.getByLabel('App name', { exact: true }).first();
-        try {
-            await nameInput.waitFor({ state: 'visible', timeout: 10000 });
-            await nameInput.fill(name);
-        } catch (e) {
-            console.log('getByLabel failed, trying backup selector...');
-            const backupInput = page.locator('input[debugid^="acx"], input[aria-label*="App name"], input').first();
-            await backupInput.fill(name);
-        }
-        await delay(page, 2000);
+        // 填写应用名称和包名
+        console.log('Filling App name...');
+        const appNameInput = page.locator(
+            '[debug-id="app-name-input"] input, input[aria-label="App name"]'
+        ).first();
+        await retryAction(async () => {
+            await appNameInput.waitFor({ state: 'visible', timeout: 15000 });
+            await appNameInput.fill(appName);
+        }, 'Fill App name');
+        await delay(page, 1500);
 
-        // Select App or Game (random choice)
+        console.log('Filling App package name...');
+        const packageNameInput = page.locator(
+            '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
+        ).first();
+        await retryAction(async () => {
+            await packageNameInput.waitFor({ state: 'visible', timeout: 15000 });
+            await packageNameInput.fill(packageName);
+        }, 'Fill App package name');
+        await delay(page, 1500);
+
+        const checkPackageBtn = page.locator('[debug-id="check-package-name-availability-button"]').first();
+        if (await checkPackageBtn.isVisible().catch(() => false)) {
+            console.log('Checking package name availability...');
+            const enabled = await waitForEnabled(checkPackageBtn, 15000);
+            if (enabled) {
+                await retryAction(async () => {
+                    await checkPackageBtn.click({ timeout: 10000 });
+                }, 'Click Check availability');
+                await delay(page, 5000);
+            } else {
+                console.log('Warning: "Check availability" button did not become enabled in time.');
+            }
+        } else {
+            console.log('Warning: Check availability button not found, continuing...');
+        }
+
+        // 随机选择 App 或 Game
         const isApp = Math.random() < 0.5;
         const typeLabel = isApp ? 'App' : 'Game';
         const typeId = isApp ? 'app-radio' : 'game-radio';
@@ -106,14 +270,14 @@ async function runOnce() {
         }, `Select type: ${typeLabel}`);
         await delay(page, 2000);
 
-        // Select Free
+        // 选择 Free
         console.log('Selecting mode: Free');
         await retryAction(async () => {
             await page.getByText('Free', { exact: true }).first().click({ timeout: 5000 });
         }, 'Select Free mode');
         await delay(page, 2000);
 
-        // Declarations
+        // 勾选声明项
         console.log('Checking policy declarations...');
         const declarationCheckboxes = [
             '[debug-id="guidelines-checkbox"]',
@@ -140,7 +304,7 @@ async function runOnce() {
 
         await delay(page);
 
-        // Click Create
+        // 点击 Create
         console.log('Clicking "Create" submit button...');
         const submitBtn = page.locator('material-button[debug-id="create-app-button"] button').first();
         await retryAction(async () => {
@@ -151,7 +315,7 @@ async function runOnce() {
         console.log('App created successfully, navigating to dashboard...');
         await delay(page, 8000);
 
-        // Extract app base path
+        // 提取应用基础路径
         const currentUrl = page.url();
         const baseMatch = currentUrl.match(/(.*\/app\/\d+)/);
         if (!baseMatch) {
@@ -160,7 +324,7 @@ async function runOnce() {
         const appBasePath = baseMatch[1];
         console.log('App path:', appBasePath);
 
-        // --- Helper functions in closure ---
+        // --- 闭包内辅助函数 ---
         async function goToAppContent() {
             await page.goto(appBasePath + '/app-content/overview', { timeout: 90000, waitUntil: 'domcontentloaded' });
             await delay(page, 8000);
@@ -236,10 +400,10 @@ async function runOnce() {
             }, `Click "${text}" button`);
         }
 
-        // --- Execute Declarations ---
+        // --- 执行声明流程 ---
         await goToAppContent();
 
-        // 1. Ads
+        // 1. 广告
         console.log('Executing declaration 1/7: Ads...');
         await clickStartDeclaration('Ads');
         await selectRadio(/^No/);
@@ -247,7 +411,7 @@ async function runOnce() {
         await waitSaved(page);
         await goToAppContent();
 
-        // 2. App access
+        // 2. 应用访问权限
         console.log('Executing declaration 2/7: App access...');
         await clickStartDeclaration('App access');
         await selectRadio('All functionality in my app is available without any access restrictions');
@@ -255,7 +419,7 @@ async function runOnce() {
         await waitSaved(page);
         await goToAppContent();
 
-        // 3. Target audience and content
+        // 3. 目标受众和内容
         console.log('Executing declaration 3/7: Target audience and content...');
         await clickStartDeclaration('Target audience and content');
         await selectCheckbox('13-15');
@@ -286,7 +450,7 @@ async function runOnce() {
         await waitSaved(page);
         await goToAppContent();
 
-        // 4. Advertising ID
+        // 4. 广告 ID
         console.log('Executing declaration 4/7: Advertising ID...');
         await clickStartDeclaration('Advertising ID');
         await selectRadio(/^Yes/);
@@ -297,7 +461,7 @@ async function runOnce() {
         await delay(page, 2000);
         await goToAppContent();
 
-        // 5. Government apps
+        // 5. 政府应用
         console.log('Executing declaration 5/7: Government apps...');
         await clickStartDeclaration('Government apps');
         await selectRadio(/^No/);
@@ -305,7 +469,7 @@ async function runOnce() {
         await waitSaved(page);
         await goToAppContent();
 
-        // 6. Financial features
+        // 6. 金融功能
         console.log('Executing declaration 6/7: Financial features...');
         await clickStartDeclaration('Financial features');
         await selectCheckbox("My app doesn't provide any financial features");
@@ -314,7 +478,7 @@ async function runOnce() {
         await waitSaved(page);
         await goToAppContent();
 
-        // 7. Health apps
+        // 7. 健康应用
         console.log('Executing declaration 7/7: Health apps...');
         await clickStartDeclaration('Health apps');
         await selectCheckbox('My app does not have any health features');
@@ -326,7 +490,7 @@ async function runOnce() {
         await page.click('text=All apps').catch(() => { });
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
-        console.log(`Finished: ${name}, Duration: ${formatDuration(durationSeconds)}`);
+        console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
         await browser.close();
     } catch (err) {
         console.error(`[FATAL ERROR] In iteration: ${err.message}`);
@@ -335,21 +499,34 @@ async function runOnce() {
     }
 }
 
-const count = parseInt(process.argv[2] || '1');
-
 (async () => {
-    for (let i = 0; i < count; i++) {
-        console.log(`Iteration ${i + 1}/${count}`);
+    const { inputFileArg } = parseCliArgs();
+    const inputFilePath = resolveInputExcelFile(inputFileArg);
+    const { tasks, sheetName } = loadTasksFromExcel(inputFilePath);
+    const selectedTasks = tasks;
+
+    console.log(`Loaded ${tasks.length} rows from Excel: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
+    console.log(`Will execute ${selectedTasks.length} iteration(s), matching Excel valid rows.`);
+
+    for (let i = 0; i < selectedTasks.length; i++) {
+        const task = selectedTasks[i];
+        console.log(
+            `Iteration ${i + 1}/${selectedTasks.length} | Excel row ${task.rowNumber} | ` +
+            `App="${task.appName}" | Package="${task.packageName}"`
+        );
         try {
-            await runOnce();
+            await runOnce(task);
         } catch (e) {
             console.error(`Iteration ${i + 1} failed but continuing...`);
         }
 
-        if (i < count - 1) {
+        if (i < selectedTasks.length - 1) {
             const wait = 60000 + Math.random() * 120000;
             console.log('Wait until next iteration:', formatDuration(Math.round(wait / 1000)));
             await new Promise(r => setTimeout(r, wait));
         }
     }
-})();
+})().catch(err => {
+    console.error(`[INIT ERROR] ${err.message}`);
+    process.exit(1);
+});

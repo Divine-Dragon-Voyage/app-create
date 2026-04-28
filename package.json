@@ -4,9 +4,7 @@
   "description": "使用 Playwright 自动在 Google Play Console 创建应用并完成常见声明流程。",
   "main": "create_app.js",
   "scripts": {
-    "start": "node create_app.js",
-    "start:once": "node create_app.js 1",
-    "start:5": "node create_app.js 5"
+    "start": "node create_app.js"
   },
   "repository": {
     "type": "git",
@@ -22,6 +20,7 @@
   "homepage": "https://github.com/taiwuyang1/app-create#readme",
   "private": true,
   "dependencies": {
-    "playwright": "^1.59.1"
+    "playwright": "^1.59.1",
+    "xlsx": "^0.18.5"
   }
 }

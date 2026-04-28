@@ -1,6 +1,6 @@
 # app-create
 
-使用 Playwright 自动在 Google Play Console 创建应用并完成常见声明流程。
+使用 Playwright 自动在 Google Play Console 创建应用，并从 Excel 读取每条应用的名称与包名。
 
 ## 功能说明
 
@@ -9,11 +9,31 @@
 当前实现会：
 
 1. 连接本地已开启 CDP 的 Chrome（`http://localhost:9222`）。
-2. 进入指定开发者控制台的应用列表页。
-3. 点击 `Create app` 并填写应用名（时间戳）。
-4. 随机选择 `App` 或 `Game`，选择 `Free`。
-5. 自动勾选创建页声明项并提交创建。
-6. 进入 `App content`，依次处理 7 类声明（Ads / App access / Target audience / Advertising ID / Government apps / Financial features / Health apps）。
+2. 从项目根目录的 Excel 读取 `应用名称`、`应用包名`（或英文同义列名）。
+3. 逐行进入开发者控制台并点击 `Create app`。
+4. 填写 `App name` 与 `App package name`，并点击 `Check availability`。
+5. 随机选择 `App` 或 `Game`，选择 `Free`。
+6. 自动勾选创建页声明项并提交创建。
+7. 进入 `App content`，依次处理 7 类声明（Ads / App access / Target audience / Advertising ID / Government apps / Financial features / Health apps）。
+
+## Excel 格式
+
+脚本会读取第一个工作表，支持以下列名（任一组合即可）：
+
+- 应用名称 / 应用名 / App Name / Application Name
+- 应用包名 / 包名 / App Package Name / Package Name / Application ID
+
+示例：
+
+| 应用名称 | 应用包名 |
+|---|---|
+| PixelGrid | com.pixelgridabcde.artfghijk |
+| FlowBreath | com.flowbreathkjmnt.toolsqwerty |
+
+校验规则：
+
+- `应用名称` 不能为空，且长度 <= 30
+- `应用包名` 不能为空，且需符合 `com.example.appname` 格式（小写字母/数字/下划线 + 点分段）
 
 ## 运行前准备
 
@@ -49,29 +69,18 @@ open -na "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir=/tm
 npm run start
 ```
 
-默认执行 1 次。指定执行次数：
+默认行为：
+
+- 自动读取根目录第一个 `.xlsx/.xls` 文件
+- 按 Excel 全部有效行执行
+
+指定 Excel 文件：
 
 ```bash
-npm run start -- 5
+npm run start -- ./apps.xlsx
 ```
 
-脚本在多次执行之间会随机等待 60-180 秒。
-
-也可以直接使用预设脚本：
-
-```bash
-npm run start:once
-npm run start:5
-```
-
-## 关键行为与默认选项
-
-- 应用名：按当前时间生成（`YYYYMMDDHHmmss`）
-- 类型：`App` / `Game` 随机
-- 收费方式：`Free`
-- 声明页中多数选项偏向“无相关功能”或最小功能路径
-
-请根据你的真实业务自行调整 `create_app.js` 中各声明步骤，避免与应用实际功能不一致。
+脚本在多次执行之间会随机等待 60-180 秒（用于降低频率）。
 
 ## 常见问题
 
@@ -82,6 +91,12 @@ npm run start:5
 ```bash
 npm install
 ```
+
+### 找不到 Excel 或列名不匹配
+
+- 确认根目录存在 `.xlsx/.xls` 文件，或显式传文件路径
+- 确认表头包含：`应用名称` 与 `应用包名`（或 README 中列出的英文同义名）
+- 确认数据在第一个工作表
 
 ### `connectOverCDP` 超时 / 连接失败
 
@@ -101,4 +116,5 @@ Google Play Console 页面会变更，若报错可优先检查：
 
 - 本脚本会执行真实创建操作，请先在测试账号验证。
 - 声明信息需与应用真实功能一致，避免合规风险。
+- 包名冲突时需要更换 Excel 中对应包名后重试。
 - 若用于批量操作，建议增加日志持久化和失败截图。
