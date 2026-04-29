@@ -4,7 +4,9 @@
   "description": "使用 Playwright 自动在 Google Play Console 创建应用并完成常见声明流程。",
   "main": "create_app.js",
   "scripts": {
-    "start": "node create_app.js"
+    "start": "node create_app.js",
+    "bootstrap:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap_windows.ps1",
+    "bootstrap:win:auto": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap_windows.ps1 -AutoLaunchBrowser"
   },
   "repository": {
     "type": "git",

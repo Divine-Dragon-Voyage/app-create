@@ -51,6 +51,46 @@
 npm install
 ```
 
+### Windows VPS 一键初始化（推荐）
+
+如果你的 VPS 是 Windows（例如 HubVPS），可以直接双击：
+
+`setup_windows.cmd`
+
+或 PowerShell 执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap_windows.ps1 -AutoLaunchBrowser
+```
+
+或在项目目录执行：
+
+```bash
+npm run bootstrap:win:auto
+```
+
+这个脚本会自动做以下事情：
+
+- 检测 Node.js（要求 >= 18），没有就自动安装
+- 检测 npm
+- 检测项目依赖（`playwright` / `xlsx`），缺失就自动安装
+- 检测 CDP 端口是否可访问（`http://127.0.0.1:9222/json/version`）
+- 可选自动启动浏览器并打开 CDP 调试端口（默认端口 `9222`）
+
+首次运行会自动弹出 UAC 管理员授权窗口，请点允许。
+
+如果你只想做安装，不检查 CDP，可加参数：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap_windows.ps1 -SkipCdpCheck
+```
+
+如果你要明确指定 HubVPS 浏览器路径：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap_windows.ps1 -AutoLaunchBrowser -BrowserPath "C:\Path\To\HubVPSBrowser.exe"
+```
+
 ### 3) 启动带远程调试端口的 Chrome
 
 macOS 示例：
@@ -60,6 +100,12 @@ open -na "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir=/tm
 ```
 
 然后在这个浏览器里手动登录 Google 账号与 Play Console。
+
+Windows（Chrome/HubVPS）示例：
+
+```powershell
+"C:\Path\To\Your\Browser.exe" --remote-debugging-port=9222 --user-data-dir="C:\chrome-cdp-app-create"
+```
 
 ## 使用方式
 
