@@ -22,6 +22,15 @@ const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
 ]);
 
 const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
+const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
+const DEVELOPER_URL_TEMPLATE = [
+    '# Paste your Play Console developer URL below (single line).',
+    '# Example:',
+    '# https://play.google.com/console/u/0/developers/1234567890123456789/app-list',
+    '',
+    'https://play.google.com/console/u/0/developers/REPLACE_WITH_YOUR_DEVELOPER_ID/app-list'
+].join('\n');
 
 function normalizeHeader(value) {
     return String(value || '')
@@ -43,6 +52,81 @@ function parseCliArgs() {
     }
 
     return { inputFileArg };
+}
+
+function resolveConfigDirectory() {
+    const configuredDir = String(process.env[CONFIG_DIR_ENV] || '').trim();
+    if (!configuredDir) {
+        return process.cwd();
+    }
+    return path.resolve(configuredDir);
+}
+
+function ensureDeveloperUrlTemplate(configPath) {
+    if (fs.existsSync(configPath)) {
+        return;
+    }
+
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    try {
+        fs.writeFileSync(configPath, DEVELOPER_URL_TEMPLATE + '\n', { encoding: 'utf8', flag: 'wx' });
+    } catch (_) {
+        // Ignore race conditions when multiple processes create the file at once.
+    }
+}
+
+function parseDeveloperBaseUrl(rawUrl) {
+    const text = String(rawUrl || '').trim();
+    if (!text) {
+        throw new Error('Developer URL is empty.');
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(text);
+    } catch (_) {
+        throw new Error(`Developer URL is invalid: "${text}"`);
+    }
+
+    if (parsed.hostname !== 'play.google.com') {
+        throw new Error(`Developer URL host must be play.google.com, got: ${parsed.hostname}`);
+    }
+
+    const normalized = `${parsed.origin}${parsed.pathname}`;
+    const match = normalized.match(
+        /^(https?:\/\/play\.google\.com\/(?:console(?:\/u\/\d+)?\/)?developers\/\d+)/
+    );
+
+    if (!match) {
+        throw new Error(
+            'Developer URL must contain "/developers/<developer_id>". ' +
+            `Current URL: "${text}"`
+        );
+    }
+
+    return match[1];
+}
+
+function loadDeveloperConsoleAppListUrl() {
+    const configDir = resolveConfigDirectory();
+    const configPath = path.resolve(configDir, DEVELOPER_URL_CONFIG_FILE);
+    ensureDeveloperUrlTemplate(configPath);
+
+    const fileContent = fs.readFileSync(configPath, 'utf8');
+    const rawUrl = fileContent
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .find(line => line && !line.startsWith('#'));
+
+    if (!rawUrl) {
+        throw new Error(
+            `Missing developer URL in config file: ${configPath}. ` +
+            'Please paste your Play Console URL into that file.'
+        );
+    }
+
+    const baseUrl = parseDeveloperBaseUrl(rawUrl);
+    return { appListUrl: `${baseUrl}/app-list`, configPath };
 }
 
 function resolveInputExcelFile(inputFileArg) {
@@ -192,7 +276,7 @@ async function waitSaved(page) {
     await delay(page, 5000); // 保存后额外等待，给后端处理留时间
 }
 
-async function runOnce(task) {
+async function runOnce(task, appListUrl) {
     const startTime = Date.now();
     const appName = task.appName;
     const packageName = task.packageName;
@@ -212,8 +296,7 @@ async function runOnce(task) {
         page.setDefaultTimeout(60000); // 设置页面全局超时为 60 秒
 
         // 直接进入应用列表页，跳过账号选择
-        const DEV_URL = 'https://play.google.com/console/u/0/developers/5719511147760424406';
-        await page.goto(DEV_URL + '/app-list', { timeout: 90000, waitUntil: 'domcontentloaded' });
+        await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' });
         await delay(page, 8000);
 
         console.log('Clicking "Create app" button on list page...');
@@ -501,10 +584,12 @@ async function runOnce(task) {
 
 (async () => {
     const { inputFileArg } = parseCliArgs();
+    const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
     const inputFilePath = resolveInputExcelFile(inputFileArg);
     const { tasks, sheetName } = loadTasksFromExcel(inputFilePath);
     const selectedTasks = tasks;
 
+    console.log(`Developer console URL loaded from: ${configPath}`);
     console.log(`Loaded ${tasks.length} rows from Excel: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
     console.log(`Will execute ${selectedTasks.length} iteration(s), matching Excel valid rows.`);
 
@@ -515,7 +600,7 @@ async function runOnce(task) {
             `App="${task.appName}" | Package="${task.packageName}"`
         );
         try {
-            await runOnce(task);
+            await runOnce(task, appListUrl);
         } catch (e) {
             console.error(`Iteration ${i + 1} failed but continuing...`);
         }

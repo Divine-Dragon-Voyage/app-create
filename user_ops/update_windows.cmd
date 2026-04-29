@@ -1,8 +1,8 @@
 @echo off
 setlocal
 
-set SCRIPT_DIR=%~dp0
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%deploy_windows.ps1" -Mode update -AutoLaunchBrowser
+for %%I in ("%~dp0..") do set "ROOT_DIR=%%~fI"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\deploy_windows.ps1" -Mode update -AutoLaunchBrowser
 
 if errorlevel 1 (
   echo.

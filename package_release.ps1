@@ -27,16 +27,21 @@ function Main {
     try {
         $files = @(
             "README.md",
+            "WORKFLOW.md",
             "package.json",
             "package-lock.json",
             "create_app.js",
             "bootstrap_windows.ps1",
             "deploy_windows.ps1",
+            "developer_url.txt",
             "release_url.txt",
-            "setup_windows.cmd",
-            "install_windows.cmd",
-            "update_windows.cmd",
-            "run_windows.cmd"
+            "tech_ops\README.md",
+            "tech_ops\release_windows.cmd",
+            "tech_ops\release_mac_linux.sh",
+            "user_ops\README.md",
+            "user_ops\install_windows.cmd",
+            "user_ops\update_windows.cmd",
+            "user_ops\run_windows.cmd"
         )
 
         if ($IncludeSampleExcel) {
@@ -46,7 +51,12 @@ function Main {
         foreach ($name in $files) {
             $src = Join-Path $projectDir $name
             if (Test-Path $src) {
-                Copy-Item -Path $src -Destination (Join-Path $stagingDir $name) -Force
+                $dest = Join-Path $stagingDir $name
+                $destParent = Split-Path -Parent $dest
+                if ($destParent -and -not (Test-Path $destParent)) {
+                    New-Item -Path $destParent -ItemType Directory -Force | Out-Null
+                }
+                Copy-Item -Path $src -Destination $dest -Force
             }
         }
 

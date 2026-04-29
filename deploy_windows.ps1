@@ -125,6 +125,12 @@ function Copy-ExcelToDataDir {
             Copy-Item -Path $file.FullName -Destination $dest -Force
         }
     }
+
+    $developerUrlFile = Join-Path $SourceDir "developer_url.txt"
+    $targetDeveloperUrlFile = Join-Path $TargetDataDir "developer_url.txt"
+    if ((Test-Path $developerUrlFile) -and (-not (Test-Path $targetDeveloperUrlFile))) {
+        Copy-Item -Path $developerUrlFile -Destination $targetDeveloperUrlFile -Force
+    }
 }
 
 function Backup-InstallDirectory {
@@ -289,8 +295,9 @@ function Main {
         Write-Host ""
         Write-Ok "Deploy finished."
         Write-Host "Next actions:"
-        Write-Host "  1) Put your Excel in: $DataDir\apps.xlsx"
-        Write-Host "  2) Run: $InstallDir\run_windows.cmd"
+        Write-Host "  1) Edit developer URL file: $DataDir\developer_url.txt"
+        Write-Host "  2) Put your Excel in: $DataDir\apps.xlsx"
+        Write-Host "  3) Run: $InstallDir\user_ops\run_windows.cmd"
     } finally {
         if (Test-Path $tempRoot) {
             Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

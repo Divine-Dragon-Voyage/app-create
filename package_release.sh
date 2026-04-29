@@ -13,20 +13,26 @@ mkdir -p "$STAGING_DIR"
 
 FILES=(
   "README.md"
+  "WORKFLOW.md"
   "package.json"
   "package-lock.json"
   "create_app.js"
   "bootstrap_windows.ps1"
   "deploy_windows.ps1"
+  "developer_url.txt"
   "release_url.txt"
-  "setup_windows.cmd"
-  "install_windows.cmd"
-  "update_windows.cmd"
-  "run_windows.cmd"
+  "tech_ops/README.md"
+  "tech_ops/release_windows.cmd"
+  "tech_ops/release_mac_linux.sh"
+  "user_ops/README.md"
+  "user_ops/install_windows.cmd"
+  "user_ops/update_windows.cmd"
+  "user_ops/run_windows.cmd"
 )
 
 for file in "${FILES[@]}"; do
   if [[ -f "$SCRIPT_DIR/$file" ]]; then
+    mkdir -p "$STAGING_DIR/$(dirname "$file")"
     cp "$SCRIPT_DIR/$file" "$STAGING_DIR/$file"
   fi
 done

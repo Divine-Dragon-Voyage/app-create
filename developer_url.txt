@@ -1,0 +1,5 @@
+# Paste your Play Console developer URL below (single line).
+# Example:
+# https://play.google.com/console/u/0/developers/1234567890123456789/app-list
+
+https://play.google.com/console/u/0/developers/REPLACE_WITH_YOUR_DEVELOPER_ID/app-list
