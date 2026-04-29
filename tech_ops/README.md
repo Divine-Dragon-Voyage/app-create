@@ -1,5 +1,7 @@
 # tech_ops
 
+完整流程文档：[`../TECH_WORKFLOW.md`](../TECH_WORKFLOW.md)
+
 技术人员只需要使用这个目录里的发布命令：
 
 - Windows：`release_windows.cmd`

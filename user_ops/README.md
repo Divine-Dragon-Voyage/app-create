@@ -1,5 +1,7 @@
 # user_ops
 
+完整流程文档：[`../USER_WORKFLOW.md`](../USER_WORKFLOW.md)
+
 普通用户只需要使用这个目录里的 3 个文件：
 
 - `install_windows.cmd`：首次安装

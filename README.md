@@ -2,7 +2,10 @@
 
 使用 Playwright 自动在 Google Play Console 创建应用，并从 Excel 读取每条应用的名称与包名。
 
-快速查看操作步骤请直接看：[WORKFLOW.md](./WORKFLOW.md)。
+快速查看操作步骤：
+
+- 技术人员：[TECH_WORKFLOW.md](./TECH_WORKFLOW.md)
+- 普通用户：[USER_WORKFLOW.md](./USER_WORKFLOW.md)
 
 目录分工：
 
