@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node create_app.js",
     "bootstrap:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap_windows.ps1",
-    "bootstrap:win:auto": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap_windows.ps1 -AutoLaunchBrowser"
+    "bootstrap:win:auto": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap_windows.ps1 -AutoLaunchBrowser",
+    "deploy:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\deploy_windows.ps1 -Mode installOrUpdate -AutoLaunchBrowser",
+    "update:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\deploy_windows.ps1 -Mode update -AutoLaunchBrowser",
+    "release:zip": "bash ./package_release.sh",
+    "release:zip:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\package_release.ps1"
   },
   "repository": {
     "type": "git",

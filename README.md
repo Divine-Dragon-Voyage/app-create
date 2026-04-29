@@ -51,45 +51,25 @@
 npm install
 ```
 
-### Windows VPS 一键初始化（推荐）
+### Windows VPS（给非技术用户）
 
-如果你的 VPS 是 Windows（例如 HubVPS），可以直接双击：
+本项目新增了三份双击脚本：
 
-`setup_windows.cmd`
+- `install_windows.cmd`：首次安装/覆盖安装（会下载最新代码并自动初始化环境）
+- `update_windows.cmd`：后续更新（重新下载并覆盖）
+- `run_windows.cmd`：正式执行创建任务
 
-或 PowerShell 执行：
+它们内部会调用 `deploy_windows.ps1` + `bootstrap_windows.ps1`，自动完成：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap_windows.ps1 -AutoLaunchBrowser
-```
+- 下载你发布的 zip 包
+- 自动检测/安装 Node.js 与 npm 依赖
+- 自动检测 CDP 端口
+- 可选自动启动浏览器调试模式（`9222`）
 
-或在项目目录执行：
+首次运行会弹出 UAC 管理员授权，请点允许。
 
-```bash
-npm run bootstrap:win:auto
-```
-
-这个脚本会自动做以下事情：
-
-- 检测 Node.js（要求 >= 18），没有就自动安装
-- 检测 npm
-- 检测项目依赖（`playwright` / `xlsx`），缺失就自动安装
-- 检测 CDP 端口是否可访问（`http://127.0.0.1:9222/json/version`）
-- 可选自动启动浏览器并打开 CDP 调试端口（默认端口 `9222`）
-
-首次运行会自动弹出 UAC 管理员授权窗口，请点允许。
-
-如果你只想做安装，不检查 CDP，可加参数：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap_windows.ps1 -SkipCdpCheck
-```
-
-如果你要明确指定 HubVPS 浏览器路径：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap_windows.ps1 -AutoLaunchBrowser -BrowserPath "C:\Path\To\HubVPSBrowser.exe"
-```
+发布包下载地址由 `release_url.txt` 控制。  
+默认值是 GitHub `main.zip`，你可以改成你自己的文件服务器链接。
 
 ### 3) 启动带远程调试端口的 Chrome
 
@@ -109,24 +89,43 @@ Windows（Chrome/HubVPS）示例：
 
 ## 使用方式
 
+### 非技术用户（Windows）
+
+1. 首次：双击 `install_windows.cmd`
+2. 把 Excel 放到 `C:\app-create-data\apps.xlsx`
+3. 双击 `run_windows.cmd`
+4. 后续更新：双击 `update_windows.cmd`
+
+### 技术用户（命令行）
+
 在项目目录执行：
 
 ```bash
 npm run start
 ```
 
-默认行为：
-
-- 自动读取根目录第一个 `.xlsx/.xls` 文件
-- 按 Excel 全部有效行执行
-
-指定 Excel 文件：
+或指定 Excel：
 
 ```bash
 npm run start -- ./apps.xlsx
 ```
 
 脚本在多次执行之间会随机等待 60-180 秒（用于降低频率）。
+
+### 维护者发布流程（你本地）
+
+1. 本地开发和测试，提交到 GitHub
+2. 执行打包（macOS/Linux）：
+```bash
+npm run release:zip
+```
+Windows 打包可用：
+```powershell
+npm run release:zip:win
+```
+3. 上传 `dist/app-create-latest.zip` 到你的文件服务器固定链接（例如 `https://your-domain/app-create-latest.zip`）
+4. 在仓库里把 `release_url.txt` 改成这个固定链接，并再次发布
+5. 通知用户在 VPS 双击 `update_windows.cmd`
 
 ## 常见问题
 
