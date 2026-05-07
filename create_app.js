@@ -23,13 +23,15 @@ const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
 
 const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
+const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
     '# Example:',
     '# https://play.google.com/console/u/0/developers/1234567890123456789/app-list',
     '',
-    'https://play.google.com/console/u/0/developers/REPLACE_WITH_YOUR_DEVELOPER_ID/app-list'
+    //'https://play.google.com/console/u/0/developers/REPLACE_WITH_YOUR_DEVELOPER_ID/app-list'
+    'https://play.google.com/console/u/0/developers/5719511147760424406/app-list'
 ].join('\n');
 
 function normalizeHeader(value) {
@@ -252,6 +254,43 @@ async function waitForEnabled(locator, timeoutMs = 15000) {
 }
 
 // 全局重试包装器，用于 UI 交互
+function getCdpEndpoints() {
+    const configured = String(process.env[CDP_ENDPOINT_ENV] || '').trim();
+    if (configured) {
+        return [configured];
+    }
+    // Prefer IPv4 first to avoid localhost -> ::1 connection failures.
+    return ['http://127.0.0.1:9222', 'http://localhost:9222'];
+}
+
+function isCdpConnectionError(err) {
+    const message = String((err && err.message) || '');
+    return /connectOverCDP|ECONNREFUSED|9222|CDP/i.test(message);
+}
+
+async function connectBrowserOverCdp() {
+    const endpoints = getCdpEndpoints();
+    let lastError;
+
+    for (const endpoint of endpoints) {
+        try {
+            console.log(`Connecting to Chrome CDP endpoint: ${endpoint}`);
+            const browser = await chromium.connectOverCDP(endpoint, { timeout: 120000 });
+            return { browser, endpoint };
+        } catch (err) {
+            lastError = err;
+            console.log(`CDP connection failed at ${endpoint}: ${err.message}`);
+        }
+    }
+
+    throw new Error(
+        `Could not connect to Chrome CDP. Tried: ${endpoints.join(', ')}. ` +
+        'Please start Chrome with --remote-debugging-port=9222 and verify: ' +
+        'http://127.0.0.1:9222/json/version',
+        { cause: lastError }
+    );
+}
+
 async function retryAction(action, label = 'action', retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
@@ -284,7 +323,9 @@ async function runOnce(task, appListUrl) {
 
     let browser;
     try {
-        browser = await chromium.connectOverCDP('http://localhost:9222', { timeout: 120000 });
+        const cdpConnection = await connectBrowserOverCdp();
+        browser = cdpConnection.browser;
+        console.log(`Connected via CDP: ${cdpConnection.endpoint}`);
         const context = browser.contexts()[0];
         let page = context.pages().find(p => p.url().includes('play.google.com'));
 
@@ -583,6 +624,110 @@ async function runOnce(task, appListUrl) {
         await waitSaved(page);
         await goToAppContent();
 
+        // 8. Test and release
+        console.log('Navigating to "Test and release"...');
+        const testAndReleaseLink = page.locator(
+            'a[href*="/test-and-release"], a.item-link:has(.item-label:has-text("Test and release"))'
+        ).first();
+        await retryAction(async () => {
+            await testAndReleaseLink.waitFor({ state: 'visible', timeout: 20000 });
+            await testAndReleaseLink.scrollIntoViewIfNeeded({ timeout: 5000 });
+            await testAndReleaseLink.click({ timeout: 10000 });
+        }, 'Click Test and release');
+        try {
+            await page.waitForURL(/\/test-and-release(?:\/|$)/, { timeout: 60000 });
+        } catch (_) {
+            console.log('Warning: URL did not switch to /test-and-release in time, continuing...');
+        }
+        await delay(page, 5000);
+
+        // 9. Production
+        console.log('Navigating to "Production"...');
+        const productionLink = page.locator(
+            'a[href*="/tracks/production"], a.item-link:has(.item-label:has-text("Production"))'
+        ).first();
+        await retryAction(async () => {
+            await productionLink.waitFor({ state: 'visible', timeout: 20000 });
+            await productionLink.scrollIntoViewIfNeeded({ timeout: 5000 });
+            await productionLink.click({ timeout: 10000 });
+        }, 'Click Production');
+        try {
+            await page.waitForURL(/\/tracks\/production(?:\/|$)/, { timeout: 60000 });
+        } catch (_) {
+            console.log('Warning: URL did not switch to /tracks/production in time, continuing...');
+        }
+        await delay(page, 5000);
+
+        // 10. Countries / regions tab
+        console.log('Opening "Countries / regions" tab...');
+        const countriesRegionsTab = page.locator(
+            '[role="tab"]:has-text("Countries / regions"), a:has-text("Countries / regions"), button:has-text("Countries / regions")'
+        ).first();
+        await retryAction(async () => {
+            await countriesRegionsTab.waitFor({ state: 'visible', timeout: 20000 });
+            await countriesRegionsTab.scrollIntoViewIfNeeded({ timeout: 5000 });
+            await countriesRegionsTab.click({ timeout: 10000 });
+        }, 'Click Countries / regions tab');
+        await delay(page, 3000);
+
+        // 11. Add countries / regions
+        console.log('Clicking "Add countries / regions"...');
+        const addCountriesBtn = page.locator(
+            'button:has-text("Add countries / regions"), [role="button"]:has-text("Add countries / regions"), a:has-text("Add countries / regions"), .mdc-button:has-text("Add countries / regions")'
+        ).first();
+        await retryAction(async () => {
+            await addCountriesBtn.waitFor({ state: 'visible', timeout: 20000 });
+            await addCountriesBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
+            await addCountriesBtn.click({ timeout: 10000 });
+        }, 'Click Add countries / regions');
+        await delay(page, 3000);
+
+        // 12. Select Country / region header checkbox and ensure checked
+        console.log('Selecting "Country / region" checkbox...');
+        const countryRegionHeaderText = page.locator('text=Country / region').first();
+        const countryRegionHeaderRow = page.locator(
+            'tr:has-text("Country / region"), [role="row"]:has-text("Country / region"), div:has-text("Country / region")'
+        ).first();
+        const countryRegionCheckboxInput = countryRegionHeaderRow.locator('input[type="checkbox"]').first();
+        const countryRegionCheckboxTarget = countryRegionHeaderRow.locator('[role="checkbox"], .mdc-checkbox').first();
+
+        await retryAction(async () => {
+            await countryRegionHeaderText.waitFor({ state: 'visible', timeout: 15000 });
+            await countryRegionHeaderRow.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+
+            const checkedBefore = await countryRegionCheckboxInput.isChecked().catch(() => false);
+            if (!checkedBefore) {
+                await countryRegionCheckboxInput.check({ force: true, timeout: 10000 }).catch(async () => {
+                    if (await countryRegionCheckboxTarget.isVisible().catch(() => false)) {
+                        await countryRegionCheckboxTarget.click({ timeout: 10000 });
+                    } else {
+                        await countryRegionHeaderRow.click({ timeout: 10000 });
+                    }
+                });
+            }
+
+            const checkedAfter = await countryRegionCheckboxInput.isChecked().catch(() => false);
+            const ariaCheckedAfter = await countryRegionCheckboxTarget.getAttribute('aria-checked').catch(() => null);
+            if (!checkedAfter && ariaCheckedAfter !== 'true') {
+                throw new Error('Country / region checkbox is still not checked.');
+            }
+        }, 'Ensure Country / region checkbox checked');
+        await delay(page, 2000);
+
+        // 13. Save countries/regions selection
+        console.log('Saving countries/regions selection...');
+        await clickMainButton('Save');
+
+        // 14. Verify success marker: Targeted (N)
+        console.log('Verifying "Targeted (N)" appears...');
+        const targetedBadge = page.locator('span.button-text, button, [role="button"]').filter({
+            hasText: /Targeted\s*\(\d+\)/i
+        }).first();
+        await retryAction(async () => {
+            await targetedBadge.waitFor({ state: 'visible', timeout: 90000 });
+        }, 'Wait for Targeted (N)');
+        await delay(page, 3000);
+
         await page.click('text=All apps').catch(() => { });
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
@@ -616,10 +761,13 @@ async function runOnce(task, appListUrl) {
             await runOnce(task, appListUrl);
         } catch (e) {
             console.error(`Iteration ${i + 1} failed but continuing...`);
+            if (isCdpConnectionError(e)) {
+                throw e;
+            }
         }
 
         if (i < selectedTasks.length - 1) {
-            const wait = 60000 + Math.random() * 120000;
+            const wait = 30000 + Math.random() * 40000;
             console.log('Wait until next iteration:', formatDuration(Math.round(wait / 1000)));
             await new Promise(r => setTimeout(r, wait));
         }
