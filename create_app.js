@@ -295,9 +295,22 @@ async function runOnce(task, appListUrl) {
         await page.bringToFront();
         page.setDefaultTimeout(60000); // 设置页面全局超时为 60 秒
 
-        // 直接进入应用列表页，跳过账号选择
-        await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' });
+        // 先进入开发者账户列表页
+        console.log('Navigating to developer picker page...');
+        await page.goto('https://play.google.com/console/u/0/developers', { timeout: 90000, waitUntil: 'domcontentloaded' });
         await delay(page, 8000);
+
+        // 检查是否在开发者选择页面，如果是，则点击第一个开发者项
+        const devItem = page.locator('developer-item, [debug-id="all-developers"]').first();
+        if (await devItem.isVisible().catch(() => false)) {
+            console.log('Developer picker detected, clicking first developer item...');
+            await devItem.click();
+            await delay(page, 10000);
+        } else {
+            console.log('No picker detected or already redirected, moving to app list...');
+            await page.goto(appListUrl, { timeout: 60000, waitUntil: 'domcontentloaded' });
+            await delay(page, 5000);
+        }
 
         console.log('Clicking "Create app" button on list page...');
         const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
