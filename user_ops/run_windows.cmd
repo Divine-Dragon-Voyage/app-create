@@ -48,7 +48,14 @@ if not exist "%EXCEL_FILE%" (
 
 set APP_CREATE_CONFIG_DIR=%DATA_DIR%
 cd /d "%ROOT_DIR%"
-npm run start -- "%EXCEL_FILE%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\bootstrap_windows.ps1" -AutoLaunchBrowser -RunApp -ExcelFile "%EXCEL_FILE%"
+
+if errorlevel 1 (
+  echo.
+  echo Task failed. Please check the error output above.
+  pause
+  exit /b 1
+)
 
 echo.
 echo Task finished.

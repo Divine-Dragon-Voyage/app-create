@@ -36,6 +36,7 @@ function Main {
             "developer_url.txt",
             "release_url.txt",
             "tech_ops\README.md",
+            "tech_ops\prepare_embedded_node.ps1",
             "tech_ops\release_windows.cmd",
             "tech_ops\release_mac_linux.sh",
             "user_ops\README.md",
@@ -58,6 +59,20 @@ function Main {
                 }
                 Copy-Item -Path $src -Destination $dest -Force
             }
+        }
+
+        $folders = @(
+            "runtime"
+        )
+
+        foreach ($folder in $folders) {
+            $srcDir = Join-Path $projectDir $folder
+            if (-not (Test-Path $srcDir)) {
+                continue
+            }
+
+            $destDir = Join-Path $stagingDir $folder
+            Copy-Item -Path $srcDir -Destination $destDir -Recurse -Force
         }
 
         $dateTag = Get-Date -Format "yyyyMMdd-HHmmss"

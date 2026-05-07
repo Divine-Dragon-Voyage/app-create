@@ -22,6 +22,7 @@ FILES=(
   "developer_url.txt"
   "release_url.txt"
   "tech_ops/README.md"
+  "tech_ops/prepare_embedded_node.ps1"
   "tech_ops/release_windows.cmd"
   "tech_ops/release_mac_linux.sh"
   "user_ops/README.md"
@@ -34,6 +35,16 @@ for file in "${FILES[@]}"; do
   if [[ -f "$SCRIPT_DIR/$file" ]]; then
     mkdir -p "$STAGING_DIR/$(dirname "$file")"
     cp "$SCRIPT_DIR/$file" "$STAGING_DIR/$file"
+  fi
+done
+
+DIRS=(
+  "runtime"
+)
+
+for dir in "${DIRS[@]}"; do
+  if [[ -d "$SCRIPT_DIR/$dir" ]]; then
+    cp -R "$SCRIPT_DIR/$dir" "$STAGING_DIR/$dir"
   fi
 done
 

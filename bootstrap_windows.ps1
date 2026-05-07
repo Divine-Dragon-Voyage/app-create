@@ -6,11 +6,18 @@ param(
     [string]$BrowserUserDataDir = "C:\chrome-cdp-app-create",
     [int]$CdpPort = 9222,
     [int]$CdpWaitSeconds = 30,
-    [string]$BrowserExtraArgs = ""
+    [string]$BrowserExtraArgs = "",
+    [switch]$RunApp,
+    [string]$ExcelFile = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# 运行时命令会在 Ensure-Node 阶段被设置成“系统 Node”或“内置 Node”
+$script:ResolvedNodeCommand = "node"
+$script:ResolvedNpmCommand = "npm"
+$script:ResolvedNodeSource = "system-path"
 
 function Write-Step {
     param([string]$Message)
@@ -25,6 +32,13 @@ function Write-Ok {
 function Write-WarnLog {
     param([string]$Message)
     Write-Host "[WARN] $Message" -ForegroundColor Yellow
+}
+
+function Ensure-Directory {
+    param([Parameter(Mandatory = $true)][string]$PathValue)
+    if (-not (Test-Path $PathValue)) {
+        New-Item -Path $PathValue -ItemType Directory -Force | Out-Null
+    }
 }
 
 function Test-IsAdmin {
@@ -60,6 +74,12 @@ function Ensure-Admin {
     if ($BrowserExtraArgs) {
         $argList += @("-BrowserExtraArgs", "`"$BrowserExtraArgs`"")
     }
+    if ($RunApp) {
+        $argList += "-RunApp"
+    }
+    if ($ExcelFile) {
+        $argList += @("-ExcelFile", "`"$ExcelFile`"")
+    }
 
     $process = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argList -Wait -PassThru
     exit $process.ExitCode
@@ -94,6 +114,42 @@ function Get-CommandVersion {
     }
 }
 
+function Get-NodeVersionFromExecutable {
+    param([string]$NodeExecutable)
+
+    if (-not $NodeExecutable -or -not (Test-Path $NodeExecutable)) {
+        return $null
+    }
+
+    try {
+        $raw = (& $NodeExecutable -v 2>$null | Select-Object -First 1)
+        if (-not $raw) {
+            return $null
+        }
+        return $raw.Trim().TrimStart("v")
+    } catch {
+        return $null
+    }
+}
+
+function Get-NpmVersionFromCommand {
+    param([string]$NpmCommand)
+
+    if (-not $NpmCommand) {
+        return $null
+    }
+
+    try {
+        $raw = (& $NpmCommand -v 2>$null | Select-Object -First 1)
+        if (-not $raw) {
+            return $null
+        }
+        return $raw.Trim()
+    } catch {
+        return $null
+    }
+}
+
 function Get-NodeMajorVersion {
     param([string]$Version)
     if (-not $Version) { return $null }
@@ -106,41 +162,235 @@ function Get-NodeMajorVersion {
     return $null
 }
 
+function Set-ResolvedNodeCommands {
+    param(
+        [Parameter(Mandatory = $true)][string]$NodeCommand,
+        [Parameter(Mandatory = $true)][string]$NpmCommand,
+        [Parameter(Mandatory = $true)][string]$Source
+    )
+
+    $script:ResolvedNodeCommand = $NodeCommand
+    $script:ResolvedNpmCommand = $NpmCommand
+    $script:ResolvedNodeSource = $Source
+}
+
+function Resolve-EmbeddedNodeArchiveCandidates {
+    param(
+        [Parameter(Mandatory = $true)][string]$EmbeddedDir,
+        [Parameter(Mandatory = $true)][string]$PreferredVersion
+    )
+
+    $archOrder = if ([Environment]::Is64BitOperatingSystem) { @("x64", "x86") } else { @("x86") }
+    $candidates = New-Object System.Collections.Generic.List[object]
+
+    foreach ($arch in $archOrder) {
+        $exactFile = Join-Path $EmbeddedDir "node-v$PreferredVersion-win-$arch.zip"
+        if (Test-Path $exactFile) {
+            $candidates.Add([pscustomobject]@{
+                Arch = $arch
+                Path = $exactFile
+                Reason = "exact-version"
+            })
+        }
+
+        $fallback = Get-ChildItem -Path $EmbeddedDir -Filter "node-v*-win-$arch.zip" -File -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending
+        foreach ($item in $fallback) {
+            if ($item.FullName -eq $exactFile) {
+                continue
+            }
+            $candidates.Add([pscustomobject]@{
+                Arch = $arch
+                Path = $item.FullName
+                Reason = "fallback-version"
+            })
+        }
+    }
+
+    return $candidates
+}
+
+function Install-EmbeddedNodeRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectDir,
+        [Parameter(Mandatory = $true)][string]$PreferredVersion
+    )
+
+    $embeddedDir = Join-Path $ProjectDir "runtime\node"
+    if (-not (Test-Path $embeddedDir)) {
+        Write-WarnLog "Embedded runtime directory not found: $embeddedDir"
+        return $null
+    }
+
+    $candidates = Resolve-EmbeddedNodeArchiveCandidates -EmbeddedDir $embeddedDir -PreferredVersion $PreferredVersion
+    if (-not $candidates -or $candidates.Count -eq 0) {
+        Write-WarnLog "No embedded Node runtime archive found under: $embeddedDir"
+        return $null
+    }
+
+    foreach ($candidate in $candidates) {
+        $archivePath = $candidate.Path
+        $arch = $candidate.Arch
+        $reason = $candidate.Reason
+
+        try {
+            Write-Step "Trying embedded Node archive ($arch/$reason): $(Split-Path -Leaf $archivePath)"
+            # Clean old runtime directory to avoid stale files.
+            $installRoot = Join-Path $ProjectDir ".runtime\node\embedded-$arch"
+            if (Test-Path $installRoot) {
+                Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            Ensure-Directory -PathValue $installRoot
+
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $installRoot -Force
+
+            $nodeExe = Get-ChildItem -Path $installRoot -Filter "node.exe" -File -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $nodeExe) {
+                Write-WarnLog "Archive does not contain node.exe: $archivePath"
+                continue
+            }
+
+            $nodeDir = Split-Path -Parent $nodeExe.FullName
+            $npmCmd = Join-Path $nodeDir "npm.cmd"
+            if (-not (Test-Path $npmCmd)) {
+                Write-WarnLog "Archive does not contain npm.cmd near node.exe: $archivePath"
+                continue
+            }
+
+            $version = Get-NodeVersionFromExecutable -NodeExecutable $nodeExe.FullName
+            $major = Get-NodeMajorVersion -Version $version
+            if (-not $major -or $major -lt 18) {
+                Write-WarnLog "Embedded Node version is too old (v$version), requires >= 18."
+                continue
+            }
+
+            return [pscustomobject]@{
+                NodeCommand = $nodeExe.FullName
+                NpmCommand = $npmCmd
+                NodeVersion = $version
+                Source = "embedded-zip-$arch"
+                BinDir = $nodeDir
+                ArchivePath = $archivePath
+            }
+        } catch {
+            Write-WarnLog "Failed to use archive $(Split-Path -Leaf $archivePath): $($_.Exception.Message)"
+        }
+    }
+
+    return $null
+}
+
+function Try-Install-NodeJsMsi {
+    param(
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$Arch
+    )
+
+    $msiName = "node-v$Version-$Arch.msi"
+    $downloadUrl = "https://nodejs.org/dist/v$Version/$msiName"
+    $localMsi = Join-Path $env:TEMP ("app-create-" + $msiName)
+
+    try {
+        Write-Step "Downloading Node.js MSI ($Arch): $downloadUrl"
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $localMsi -UseBasicParsing
+
+        Write-Step "Installing Node.js MSI silently ($Arch)..."
+        $msiArgs = "/i `"$localMsi`" /qn /norestart"
+        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
+        if ($process.ExitCode -ne 0) {
+            throw "msiexec exited with code $($process.ExitCode)."
+        }
+
+        return $true
+    } finally {
+        Remove-Item -Path $localMsi -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Install-NodeJs {
     param([string]$Version)
 
-    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
-    $msiName = "node-v$Version-$arch.msi"
-    $downloadUrl = "https://nodejs.org/dist/v$Version/$msiName"
-    $localMsi = Join-Path $env:TEMP $msiName
+    # 中文注释：64 位系统优先装 x64，失败再回退 x86，尽量兼容不同 VPS 镜像
+    $archCandidates = if ([Environment]::Is64BitOperatingSystem) { @("x64", "x86") } else { @("x86") }
+    $lastError = $null
 
-    Write-Step "Downloading Node.js $Version ($arch) ..."
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $localMsi -UseBasicParsing
-
-    Write-Step "Installing Node.js silently..."
-    $msiArgs = "/i `"$localMsi`" /qn /norestart"
-    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
-    if ($process.ExitCode -ne 0) {
-        throw "Node.js MSI install failed with exit code $($process.ExitCode)."
+    foreach ($arch in $archCandidates) {
+        try {
+            if (Try-Install-NodeJsMsi -Version $Version -Arch $arch) {
+                Write-Ok "Node.js installed from MSI ($arch)."
+                return
+            }
+        } catch {
+            $lastError = $_
+            Write-WarnLog "Node.js MSI install failed for ${arch}: $($_.Exception.Message)"
+        }
     }
 
-    Remove-Item $localMsi -Force -ErrorAction SilentlyContinue
-    Write-Ok "Node.js installed."
+    if ($lastError) {
+        throw "Node.js MSI install failed for all architectures. Last error: $($lastError.Exception.Message)"
+    }
+    throw "Node.js MSI install failed for all architectures."
+}
+
+function Save-RuntimeResolution {
+    param([string]$ProjectDir)
+
+    $runtimeDir = Join-Path $ProjectDir ".runtime"
+    Ensure-Directory -PathValue $runtimeDir
+    $runtimeFile = Join-Path $runtimeDir "node-runtime.json"
+
+    $nodeVersion = if ($script:ResolvedNodeCommand -eq "node") {
+        Get-CommandVersion -Command "node" -PrefixToTrim "v"
+    } else {
+        Get-NodeVersionFromExecutable -NodeExecutable $script:ResolvedNodeCommand
+    }
+    $npmVersion = Get-NpmVersionFromCommand -NpmCommand $script:ResolvedNpmCommand
+
+    $payload = [ordered]@{
+        generatedAt = (Get-Date).ToString("s")
+        nodeSource = $script:ResolvedNodeSource
+        nodeCommand = $script:ResolvedNodeCommand
+        npmCommand = $script:ResolvedNpmCommand
+        nodeVersion = $nodeVersion
+        npmVersion = $npmVersion
+    }
+
+    $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $runtimeFile -Encoding UTF8
+    Write-Ok "Runtime info saved: $runtimeFile"
 }
 
 function Ensure-Node {
-    $nodeVersion = Get-CommandVersion -Command "node" -PrefixToTrim "v"
-    $nodeMajor = Get-NodeMajorVersion -Version $nodeVersion
+    param([string]$ProjectDir)
 
-    if ($nodeMajor -and $nodeMajor -ge 18) {
-        Write-Ok "Node.js already installed: v$nodeVersion"
+    $pathNodeVersion = Get-CommandVersion -Command "node" -PrefixToTrim "v"
+    $pathNodeMajor = Get-NodeMajorVersion -Version $pathNodeVersion
+
+    if ($pathNodeMajor -and $pathNodeMajor -ge 18) {
+        Set-ResolvedNodeCommands -NodeCommand "node" -NpmCommand "npm" -Source "system-path"
+        Write-Ok "Node.js already installed in PATH: v$pathNodeVersion"
         return
     }
 
-    if ($nodeVersion) {
-        Write-WarnLog "Detected Node.js v$nodeVersion (< 18). Will upgrade."
+    if ($pathNodeVersion) {
+        Write-WarnLog "Detected Node.js v$pathNodeVersion (< 18). Will try embedded runtime first."
     } else {
-        Write-WarnLog "Node.js not found. Will install."
+        Write-WarnLog "Node.js not found in PATH. Will try embedded runtime first."
+    }
+
+    $embedded = Install-EmbeddedNodeRuntime -ProjectDir $ProjectDir -PreferredVersion $NodeVersion
+    if ($embedded) {
+        Set-ResolvedNodeCommands -NodeCommand $embedded.NodeCommand -NpmCommand $embedded.NpmCommand -Source $embedded.Source
+        # Append PATH only for current process.
+        $env:Path = "$($embedded.BinDir);$env:Path"
+        Write-Ok "Using embedded Node runtime: v$($embedded.NodeVersion) [$($embedded.Source)]"
+        return
+    }
+
+    if ($pathNodeVersion) {
+        Write-WarnLog "Embedded runtime unavailable. Will install Node.js from official MSI."
+    } else {
+        Write-WarnLog "Embedded runtime unavailable. Will install Node.js from official MSI."
     }
 
     Install-NodeJs -Version $NodeVersion
@@ -150,15 +400,17 @@ function Ensure-Node {
     if (-not $newVersion) {
         throw "Node.js install finished but 'node' is still not available in PATH. Open a new terminal and rerun."
     }
-    Write-Ok "Node.js ready: v$newVersion"
+
+    Set-ResolvedNodeCommands -NodeCommand "node" -NpmCommand "npm" -Source "system-msi"
+    Write-Ok "Node.js ready from system install: v$newVersion"
 }
 
 function Ensure-Npm {
-    $npmVersion = Get-CommandVersion -Command "npm"
+    $npmVersion = Get-NpmVersionFromCommand -NpmCommand $script:ResolvedNpmCommand
     if (-not $npmVersion) {
-        throw "npm not found after Node.js setup."
+        throw "npm not found after Node.js setup. Source: $($script:ResolvedNodeSource)"
     }
-    Write-Ok "npm ready: v$npmVersion"
+    Write-Ok "npm ready: v$npmVersion (source: $($script:ResolvedNodeSource))"
 }
 
 function Ensure-ProjectDependencies {
@@ -176,9 +428,9 @@ function Ensure-ProjectDependencies {
     Push-Location $ProjectDir
     try {
         if (Test-Path (Join-Path $ProjectDir "package-lock.json")) {
-            & npm ci
+            & $script:ResolvedNpmCommand ci
         } else {
-            & npm install
+            & $script:ResolvedNpmCommand install
         }
         if ($LASTEXITCODE -ne 0) {
             throw "npm install step failed with exit code $LASTEXITCODE."
@@ -336,6 +588,34 @@ function Ensure-CdpEndpoint {
     }
 }
 
+function Invoke-AppCreation {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectDir,
+        [string]$ExcelFilePath
+    )
+
+    $entryScript = Join-Path $ProjectDir "create_app.js"
+    if (-not (Test-Path $entryScript)) {
+        throw "Entry script not found: $entryScript"
+    }
+
+    $args = @($entryScript)
+    if ($ExcelFilePath) {
+        $args += $ExcelFilePath
+    }
+
+    Write-Step "Running app task with Node source: $($script:ResolvedNodeSource)"
+    Push-Location $ProjectDir
+    try {
+        & $script:ResolvedNodeCommand @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "create_app.js exited with code $LASTEXITCODE."
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
 function Main {
     if ($env:OS -ne "Windows_NT") {
         throw "This script is for Windows VPS only."
@@ -355,16 +635,21 @@ function Main {
     # Some older Windows images need explicit TLS 1.2 for HTTPS downloads.
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    Ensure-Node
+    Ensure-Node -ProjectDir $projectDir
     Ensure-Npm
     Ensure-ProjectDependencies -ProjectDir $projectDir
     Ensure-CdpEndpoint
+    Save-RuntimeResolution -ProjectDir $projectDir
+
+    if ($RunApp) {
+        Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile
+        return
+    }
 
     Write-Host ""
     Write-Ok "Bootstrap completed."
     Write-Host "Run app creation with:"
-    Write-Host "  cd `"$projectDir`""
-    Write-Host "  npm run start -- .\apps_test_data.xlsx"
+    Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File `"$projectDir\bootstrap_windows.ps1`" -RunApp -ExcelFile `".\apps_test_data.xlsx`""
 }
 
 Main
