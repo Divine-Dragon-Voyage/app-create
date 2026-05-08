@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$NodeVersion = "20.20.2",
     [switch]$SkipCdpCheck,
     [switch]$AutoLaunchBrowser,
@@ -14,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-# 运行时命令会在 Ensure-Node 阶段被设置成“系统 Node”或“内置 Node”
+# Runtime commands are resolved in Ensure-Node to either system Node or embedded Node.
 $script:ResolvedNodeCommand = "node"
 $script:ResolvedNpmCommand = "npm"
 $script:ResolvedNodeSource = "system-path"
@@ -515,7 +515,7 @@ function Resolve-BrowserPath {
         }
         $shortcuts = Get-ChildItem -Path $root -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue
         foreach ($lnk in $shortcuts) {
-            if ($lnk.Name -match "HubVPS|防关联|Chrome|Edge|Browser") {
+            if ($lnk.Name -match "HubVPS|Chrome|Edge|Browser") {
                 $target = Resolve-ShortcutTargetPath -ShortcutPath $lnk.FullName
                 if ($target) {
                     return $target
@@ -659,7 +659,8 @@ function Main {
     Write-Host ""
     Write-Ok "Bootstrap completed."
     Write-Host "Run app creation with:"
-    Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File `"$projectDir\bootstrap_windows.ps1`" -RunApp -ExcelFile `".\apps_test_data.xlsx`""
+    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps_test_data.xlsx"' -f $projectDir)
 }
 
 Main
+
