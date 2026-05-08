@@ -30,8 +30,8 @@ const DEVELOPER_URL_TEMPLATE = [
     '# Example:',
     '# https://play.google.com/console/u/0/developers/1234567890123456789/app-list',
     '',
-    //'https://play.google.com/console/u/0/developers/REPLACE_WITH_YOUR_DEVELOPER_ID/app-list'
-    'https://play.google.com/console/u/0/developers/5719511147760424406/app-list'
+    'https://play.google.com/console/u/0/developers/REPLACE_WITH_YOUR_DEVELOPER_ID/app-list'
+    
 ].join('\n');
 
 function normalizeHeader(value) {
