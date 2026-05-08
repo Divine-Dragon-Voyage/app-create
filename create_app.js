@@ -24,6 +24,8 @@ const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
 const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
 const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
+const DEVELOPER_URL_ENV = 'APP_CREATE_DEVELOPER_URL';
+const DEVELOPER_ID_ENV = 'APP_CREATE_DEVELOPER_ID';
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
@@ -110,6 +112,25 @@ function parseDeveloperBaseUrl(rawUrl) {
 }
 
 function loadDeveloperConsoleAppListUrl() {
+    const envUrl = String(process.env[DEVELOPER_URL_ENV] || '').trim();
+    if (envUrl) {
+        const baseUrl = parseDeveloperBaseUrl(envUrl);
+        return { appListUrl: `${baseUrl}/app-list`, configPath: `env:${DEVELOPER_URL_ENV}` };
+    }
+
+    const envDeveloperId = String(process.env[DEVELOPER_ID_ENV] || '').trim();
+    if (envDeveloperId) {
+        if (!/^\d+$/.test(envDeveloperId)) {
+            throw new Error(
+                `Environment ${DEVELOPER_ID_ENV} must be numeric, got: "${envDeveloperId}".`
+            );
+        }
+        const baseUrl = parseDeveloperBaseUrl(
+            `https://play.google.com/console/u/0/developers/${envDeveloperId}/app-list`
+        );
+        return { appListUrl: `${baseUrl}/app-list`, configPath: `env:${DEVELOPER_ID_ENV}` };
+    }
+
     const configDir = resolveConfigDirectory();
     const configPath = path.resolve(configDir, DEVELOPER_URL_CONFIG_FILE);
     ensureDeveloperUrlTemplate(configPath);

@@ -8,7 +8,8 @@
     [int]$CdpWaitSeconds = 30,
     [string]$BrowserExtraArgs = "",
     [switch]$RunApp,
-    [string]$ExcelFile = ""
+    [string]$ExcelFile = "",
+    [string]$DeveloperUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +80,9 @@ function Ensure-Admin {
     }
     if ($ExcelFile) {
         $argList += @("-ExcelFile", "`"$ExcelFile`"")
+    }
+    if ($DeveloperUrl) {
+        $argList += @("-DeveloperUrl", "`"$DeveloperUrl`"")
     }
 
     $process = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argList -Wait -PassThru
@@ -601,7 +605,8 @@ function Ensure-CdpEndpoint {
 function Invoke-AppCreation {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectDir,
-        [string]$ExcelFilePath
+        [string]$ExcelFilePath,
+        [string]$DeveloperConsoleUrl
     )
 
     $entryScript = Join-Path $ProjectDir "create_app.js"
@@ -616,12 +621,24 @@ function Invoke-AppCreation {
 
     Write-Step "Running app task with Node source: $($script:ResolvedNodeSource)"
     Push-Location $ProjectDir
+    $previousDeveloperUrl = $env:APP_CREATE_DEVELOPER_URL
     try {
+        if ($DeveloperConsoleUrl) {
+            # 每次运行按用户输入覆盖开发者入口，避免手工改配置文件。
+            $env:APP_CREATE_DEVELOPER_URL = $DeveloperConsoleUrl
+        } else {
+            Remove-Item Env:APP_CREATE_DEVELOPER_URL -ErrorAction SilentlyContinue
+        }
         & $script:ResolvedNodeCommand @args
         if ($LASTEXITCODE -ne 0) {
             throw "create_app.js exited with code $LASTEXITCODE."
         }
     } finally {
+        if ($null -ne $previousDeveloperUrl) {
+            $env:APP_CREATE_DEVELOPER_URL = $previousDeveloperUrl
+        } else {
+            Remove-Item Env:APP_CREATE_DEVELOPER_URL -ErrorAction SilentlyContinue
+        }
         Pop-Location
     }
 }
@@ -652,14 +669,14 @@ function Main {
     Save-RuntimeResolution -ProjectDir $projectDir
 
     if ($RunApp) {
-        Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile
+        Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile -DeveloperConsoleUrl $DeveloperUrl
         return
     }
 
     Write-Host ""
     Write-Ok "Bootstrap completed."
     Write-Host "Run app creation with:"
-    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps_test_data.xlsx"' -f $projectDir)
+    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps.xlsx" -DeveloperUrl "https://play.google.com/console/u/0/developers/<id>/app-list"' -f $projectDir)
 }
 
 Main

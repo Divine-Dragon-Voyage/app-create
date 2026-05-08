@@ -202,6 +202,52 @@ function Ensure-DataExcelInInstallDir {
     }
 }
 
+function Ensure-DesktopShortcut {
+    param(
+        [string]$InstallPath
+    )
+
+    $runScriptPath = Join-Path $InstallPath "user_ops\run_windows.cmd"
+    if (-not (Test-Path $runScriptPath)) {
+        Write-WarnLog "Skip desktop shortcut: run script not found at $runScriptPath"
+        return
+    }
+
+    $shortcutFileName = "App Create.lnk"
+    $shortcutTargets = New-Object System.Collections.Generic.List[string]
+
+    $userDesktop = [Environment]::GetFolderPath("Desktop")
+    if ($userDesktop) {
+        $shortcutTargets.Add((Join-Path $userDesktop $shortcutFileName))
+    }
+
+    $publicDesktop = Join-Path $env:PUBLIC "Desktop"
+    if ($env:PUBLIC -and (Test-Path $publicDesktop)) {
+        $shortcutTargets.Add((Join-Path $publicDesktop $shortcutFileName))
+    }
+
+    $uniqueTargets = $shortcutTargets | Select-Object -Unique
+    if (-not $uniqueTargets) {
+        Write-WarnLog "Skip desktop shortcut: desktop path not found."
+        return
+    }
+
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($shortcutPath in $uniqueTargets) {
+        $shortcutDir = Split-Path -Parent $shortcutPath
+        Ensure-Directory -PathValue $shortcutDir
+
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $runScriptPath
+        $shortcut.WorkingDirectory = Join-Path $InstallPath "user_ops"
+        $shortcut.Description = "Double-click to start App Create automation"
+        $shortcut.IconLocation = "%SystemRoot%\System32\imageres.dll,2"
+        $shortcut.Save()
+
+        Write-Ok "Desktop shortcut ready: $shortcutPath"
+    }
+}
+
 function Run-SetupScript {
     param(
         [string]$InstallPath
@@ -292,12 +338,13 @@ function Main {
             Write-WarnLog "Skipped setup step."
         }
 
+        Ensure-DesktopShortcut -InstallPath $InstallDir
+
         Write-Host ""
         Write-Ok "Deploy finished."
         Write-Host "Next actions:"
-        Write-Host "  1) Edit developer URL file: $DataDir\developer_url.txt"
-        Write-Host "  2) Put your Excel in: $DataDir\apps.xlsx"
-        Write-Host "  3) Run: $InstallDir\user_ops\run_windows.cmd"
+        Write-Host "  1) Double-click desktop shortcut: App Create"
+        Write-Host "  2) Or run: $InstallDir\user_ops\run_windows.cmd"
     } finally {
         if (Test-Path $tempRoot) {
             Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

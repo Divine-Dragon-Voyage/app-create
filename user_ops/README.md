@@ -1,14 +1,13 @@
-# user_ops
+﻿# user_ops
 
-完整流程文档：[`../USER_WORKFLOW.md`](../USER_WORKFLOW.md)
+请优先阅读根目录文档：[使用说明.md](../使用说明.md)
 
-普通用户只需要使用这个目录里的 3 个文件：
+本目录给普通用户使用：
 
-- `install_windows.cmd`：首次安装
-- `update_windows.cmd`：后续更新
-- `run_windows.cmd`：执行创建任务
+- `install_windows.cmd`：首次安装或覆盖安装
+- `update_windows.cmd`：更新到新版本
+- `run_windows.cmd`：启动任务（会弹出输入窗口）
 
-首次安装后请按提示配置：
-
-- `C:\app-create-data\developer_url.txt`
-- `C:\app-create-data\apps.xlsx`
+说明：
+- `run_windows.cmd` 现在会拉起可视化启动器，要求每次填写 Developer ID/URL 和 Excel 路径。
+- 不再要求手工编辑固定的 `developer_url.txt` 或固定复制 `apps.xlsx` 到指定目录。

@@ -42,7 +42,9 @@ function Main {
             "user_ops\README.md",
             "user_ops\install_windows.cmd",
             "user_ops\update_windows.cmd",
-            "user_ops\run_windows.cmd"
+            "user_ops\run_windows.cmd",
+            "user_ops\launcher_windows.ps1",
+            "使用说明.md"
         )
 
         if ($IncludeSampleExcel) {

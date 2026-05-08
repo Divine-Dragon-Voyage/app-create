@@ -1,0 +1,211 @@
+﻿param(
+    [string]$ProjectRoot = "",
+    [string]$DataDir = "C:\app-create-data",
+    [bool]$AutoLaunchBrowser = $true
+)
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
+function Show-ErrorAndExit {
+    param([string]$Message, [int]$Code = 1)
+    [System.Windows.Forms.MessageBox]::Show($Message, "应用创建工具", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    exit $Code
+}
+
+function Build-DeveloperUrl {
+    param([string]$InputText)
+
+    if ([string]::IsNullOrWhiteSpace($InputText)) {
+        $text = ""
+    }
+    else {
+        $text = $InputText.Trim()
+    }
+
+    if (-not $text) {
+        throw "请填写开发者 ID 或 Play Console 链接。"
+    }
+
+    if ($text -match "^\d+$") {
+        return "https://play.google.com/console/u/0/developers/$text/app-list"
+    }
+
+    if ($text -match "^https?://") {
+        try {
+            $uri = [Uri]$text
+        }
+        catch {
+            throw "开发者链接格式不正确。"
+        }
+
+        if ($uri.Host -ne "play.google.com") {
+            throw "开发者链接域名必须是 play.google.com。"
+        }
+
+        $full = "$($uri.Scheme)://$($uri.Host)$($uri.AbsolutePath)"
+        $match = [regex]::Match($full, "^(https?://play\.google\.com/(?:console(?:/u/\d+)?/)?developers/(\d+))")
+        if (-not $match.Success) {
+            throw "开发者链接必须包含 /developers/<id>。"
+        }
+
+        return "$($match.Groups[1].Value)/app-list"
+    }
+
+    throw "请输入纯数字开发者 ID，或完整的 Play Console 开发者链接。"
+}
+
+if (-not $ProjectRoot) {
+    $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+}
+
+$ProjectRoot = (Resolve-Path $ProjectRoot).Path
+$bootstrapPath = Join-Path $ProjectRoot "bootstrap_windows.ps1"
+if (-not (Test-Path $bootstrapPath)) {
+    throw "未找到 bootstrap_windows.ps1: $bootstrapPath"
+}
+
+if (-not (Test-Path $DataDir)) {
+    New-Item -Path $DataDir -ItemType Directory -Force | Out-Null
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "应用创建启动器"
+$form.StartPosition = "CenterScreen"
+$form.Size = New-Object System.Drawing.Size(760, 280)
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+
+$labelIntro = New-Object System.Windows.Forms.Label
+$labelIntro.Text = "请填写开发者 ID（或链接），并选择本次运行要读取的 Excel 文件。"
+$labelIntro.Location = New-Object System.Drawing.Point(24, 20)
+$labelIntro.Size = New-Object System.Drawing.Size(700, 22)
+$form.Controls.Add($labelIntro)
+
+$labelDeveloper = New-Object System.Windows.Forms.Label
+$labelDeveloper.Text = "开发者 ID 或链接"
+$labelDeveloper.Location = New-Object System.Drawing.Point(24, 56)
+$labelDeveloper.Size = New-Object System.Drawing.Size(180, 20)
+$form.Controls.Add($labelDeveloper)
+
+$txtDeveloper = New-Object System.Windows.Forms.TextBox
+$txtDeveloper.Location = New-Object System.Drawing.Point(24, 78)
+$txtDeveloper.Size = New-Object System.Drawing.Size(700, 24)
+$form.Controls.Add($txtDeveloper)
+
+$labelExcel = New-Object System.Windows.Forms.Label
+$labelExcel.Text = "Excel 文件路径"
+$labelExcel.Location = New-Object System.Drawing.Point(24, 114)
+$labelExcel.Size = New-Object System.Drawing.Size(180, 20)
+$form.Controls.Add($labelExcel)
+
+$txtExcel = New-Object System.Windows.Forms.TextBox
+$txtExcel.Location = New-Object System.Drawing.Point(24, 136)
+$txtExcel.Size = New-Object System.Drawing.Size(590, 24)
+$form.Controls.Add($txtExcel)
+
+$btnBrowse = New-Object System.Windows.Forms.Button
+$btnBrowse.Text = "浏览..."
+$btnBrowse.Location = New-Object System.Drawing.Point(624, 134)
+$btnBrowse.Size = New-Object System.Drawing.Size(100, 28)
+$form.Controls.Add($btnBrowse)
+
+$btnStart = New-Object System.Windows.Forms.Button
+$btnStart.Text = "开始运行"
+$btnStart.Location = New-Object System.Drawing.Point(544, 186)
+$btnStart.Size = New-Object System.Drawing.Size(85, 30)
+$form.Controls.Add($btnStart)
+
+$btnCancel = New-Object System.Windows.Forms.Button
+$btnCancel.Text = "取消"
+$btnCancel.Location = New-Object System.Drawing.Point(639, 186)
+$btnCancel.Size = New-Object System.Drawing.Size(85, 30)
+$form.Controls.Add($btnCancel)
+
+$openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+$openFileDialog.Filter = "Excel 文件 (*.xlsx;*.xls)|*.xlsx;*.xls|所有文件 (*.*)|*.*"
+$openFileDialog.Multiselect = $false
+$openFileDialog.Title = "选择 Excel 文件"
+
+$selectedDeveloperUrl = $null
+$selectedExcelPath = $null
+$startRequested = $false
+
+$btnBrowse.Add_Click({
+    if ($txtExcel.Text -and (Test-Path $txtExcel.Text)) {
+        $openFileDialog.InitialDirectory = Split-Path -Parent $txtExcel.Text
+    }
+
+    $result = $openFileDialog.ShowDialog()
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        $txtExcel.Text = $openFileDialog.FileName
+    }
+})
+
+$btnCancel.Add_Click({
+    $form.Close()
+})
+
+$btnStart.Add_Click({
+    try {
+        $devUrl = Build-DeveloperUrl -InputText $txtDeveloper.Text
+
+        if ([string]::IsNullOrWhiteSpace($txtExcel.Text)) {
+            $excelPathRaw = ""
+        }
+        else {
+            $excelPathRaw = $txtExcel.Text.Trim()
+        }
+
+        if (-not $excelPathRaw) {
+            throw "请填写 Excel 文件路径。"
+        }
+
+        if (-not (Test-Path $excelPathRaw -PathType Leaf)) {
+            throw "Excel 文件不存在，请检查路径。"
+        }
+
+        $excelPath = (Resolve-Path $excelPathRaw -ErrorAction Stop).Path
+        $ext = [IO.Path]::GetExtension($excelPath).ToLowerInvariant()
+        if (@(".xlsx", ".xls") -notcontains $ext) {
+            throw "Excel 文件必须是 .xlsx 或 .xls 格式。"
+        }
+
+        $script:selectedDeveloperUrl = $devUrl
+        $script:selectedExcelPath = $excelPath
+        $script:startRequested = $true
+        $form.Close()
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "输入检查", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+    }
+})
+
+[void]$form.ShowDialog()
+
+if (-not $startRequested) {
+    exit 1
+}
+
+$developerConfigPath = Join-Path $DataDir "developer_url.txt"
+Set-Content -Path $developerConfigPath -Value $selectedDeveloperUrl -Encoding UTF8
+
+$args = @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", "`"$bootstrapPath`"",
+    "-RunApp",
+    "-ExcelFile", "`"$selectedExcelPath`"",
+    "-DeveloperUrl", "`"$selectedDeveloperUrl`""
+)
+if ($AutoLaunchBrowser) {
+    $args += "-AutoLaunchBrowser"
+}
+
+$process = Start-Process -FilePath "powershell.exe" -ArgumentList $args -Wait -PassThru
+exit $process.ExitCode
