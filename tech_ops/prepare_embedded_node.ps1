@@ -1,6 +1,7 @@
 param(
     [string]$NodeVersion = "20.20.2",
-    [string]$TargetDir = ""
+    [string]$TargetDir = "",
+    [switch]$IncludeX86
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,8 +68,11 @@ function Main {
 
     Ensure-Directory -PathValue $TargetDir
 
-    # Prepare both x64 and x86 runtime archives.
-    $archList = @("x64", "x86")
+    # Default strategy: only embed x64. x86 can be included manually when needed.
+    $archList = @("x64")
+    if ($IncludeX86) {
+        $archList += "x86"
+    }
     $successCount = 0
 
     foreach ($arch in $archList) {
@@ -87,6 +91,7 @@ function Main {
     Write-Host ""
     Write-Ok "Embedded runtime preparation completed."
     Write-Host "Target directory: $TargetDir"
+    Write-Host "Embedded architectures: $($archList -join ', ')"
     Write-Host "Next: run release packaging so runtime zips are included in dist zip."
 }
 

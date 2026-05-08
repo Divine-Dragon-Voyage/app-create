@@ -180,7 +180,12 @@ function Resolve-EmbeddedNodeArchiveCandidates {
         [Parameter(Mandatory = $true)][string]$PreferredVersion
     )
 
-    $archOrder = if ([Environment]::Is64BitOperatingSystem) { @("x64", "x86") } else { @("x86") }
+    # Policy: only ship embedded x64 runtime; x86 is downloaded on demand.
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        return @()
+    }
+
+    $archOrder = @("x64")
     $candidates = New-Object System.Collections.Generic.List[object]
 
     foreach ($arch in $archOrder) {
@@ -224,6 +229,10 @@ function Install-EmbeddedNodeRuntime {
 
     $candidates = Resolve-EmbeddedNodeArchiveCandidates -EmbeddedDir $embeddedDir -PreferredVersion $PreferredVersion
     if (-not $candidates -or $candidates.Count -eq 0) {
+        if (-not [Environment]::Is64BitOperatingSystem) {
+            Write-WarnLog "32-bit OS detected. Embedded x64 runtime is skipped; x86 will be installed online when needed."
+            return $null
+        }
         Write-WarnLog "No embedded Node runtime archive found under: $embeddedDir"
         return $null
     }
@@ -311,7 +320,8 @@ function Try-Install-NodeJsMsi {
 function Install-NodeJs {
     param([string]$Version)
 
-    # 中文注释：64 位系统优先装 x64，失败再回退 x86，尽量兼容不同 VPS 镜像
+    # 64-bit OS: try x64 first; fallback to x86 if needed.
+    # 32-bit OS: install x86 directly.
     $archCandidates = if ([Environment]::Is64BitOperatingSystem) { @("x64", "x86") } else { @("x86") }
     $lastError = $null
 
