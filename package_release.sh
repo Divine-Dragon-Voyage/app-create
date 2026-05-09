@@ -14,6 +14,8 @@ mkdir -p "$STAGING_DIR"
 FILES=(
   "README.md"
   "WORKFLOW.md"
+  "USER_WORKFLOW.md"
+  "TECH_WORKFLOW.md"
   "package.json"
   "package-lock.json"
   "create_app.js"
@@ -22,6 +24,7 @@ FILES=(
   "developer_url.txt"
   "release_url.txt"
   "启动.cmd"
+  "使用说明.md"
   "tech_ops/README.md"
   "tech_ops/prepare_embedded_node.ps1"
   "tech_ops/release_windows.cmd"
@@ -31,7 +34,6 @@ FILES=(
   "user_ops/update_windows.cmd"
   "user_ops/run_windows.cmd"
   "user_ops/launcher_windows.ps1"
-  "使用说明.md"
 )
 
 for file in "${FILES[@]}"; do

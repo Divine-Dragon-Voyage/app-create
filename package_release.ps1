@@ -28,6 +28,8 @@ function Main {
         $files = @(
             "README.md",
             "WORKFLOW.md",
+            "USER_WORKFLOW.md",
+            "TECH_WORKFLOW.md",
             "package.json",
             "package-lock.json",
             "create_app.js",
@@ -36,6 +38,7 @@ function Main {
             "developer_url.txt",
             "release_url.txt",
             "启动.cmd",
+            "使用说明.md",
             "tech_ops\README.md",
             "tech_ops\prepare_embedded_node.ps1",
             "tech_ops\release_windows.cmd",
@@ -44,8 +47,7 @@ function Main {
             "user_ops\install_windows.cmd",
             "user_ops\update_windows.cmd",
             "user_ops\run_windows.cmd",
-            "user_ops\launcher_windows.ps1",
-            "使用说明.md"
+            "user_ops\launcher_windows.ps1"
         )
 
         if ($IncludeSampleExcel) {
@@ -102,7 +104,8 @@ function Main {
         Write-Host "     $versionZip"
         Write-Host "[OK] Latest package refreshed:"
         Write-Host "     $latestZip"
-    } finally {
+    }
+    finally {
         if (Test-Path $tempRoot) {
             Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

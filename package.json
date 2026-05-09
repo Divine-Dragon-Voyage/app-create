@@ -10,7 +10,8 @@
     "deploy:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\deploy_windows.ps1 -Mode installOrUpdate -AutoLaunchBrowser",
     "update:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\deploy_windows.ps1 -Mode update -AutoLaunchBrowser",
     "release:zip": "bash ./package_release.sh",
-    "release:zip:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\package_release.ps1"
+    "release:zip:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\package_release.ps1",
+    "release:exe:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tech_ops\\build_installer.ps1"
   },
   "repository": {
     "type": "git",
