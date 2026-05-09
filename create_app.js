@@ -3,7 +3,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 
-// 默认延迟（毫秒），如果 VPS 较慢可适当增大
+// Default delay (ms). Increase if VPS is slow.
 const DELAY = 3000;
 
 const APP_NAME_HEADER_CANDIDATES = new Set([
@@ -26,6 +26,33 @@ const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
 const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
 const DEVELOPER_URL_ENV = 'APP_CREATE_DEVELOPER_URL';
 const DEVELOPER_ID_ENV = 'APP_CREATE_DEVELOPER_ID';
+const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
+const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\u5ea6', '\u6b65\u9aa4']);
+const STATUS_PARTIAL = 'PARTIAL';
+const STATUS_DONE = 'DONE';
+const PROGRESS_STEP_APP_CREATED = 'APP_CREATED';
+const PROGRESS_STEP_ADS_DONE = 'ADS_DONE';
+const PROGRESS_STEP_APP_ACCESS_DONE = 'APP_ACCESS_DONE';
+const PROGRESS_STEP_AUDIENCE_DONE = 'AUDIENCE_DONE';
+const PROGRESS_STEP_AD_ID_DONE = 'AD_ID_DONE';
+const PROGRESS_STEP_GOV_DONE = 'GOV_DONE';
+const PROGRESS_STEP_FINANCE_DONE = 'FINANCE_DONE';
+const PROGRESS_STEP_HEALTH_DONE = 'HEALTH_DONE';
+const PROGRESS_STEP_COUNTRY_DONE = 'COUNTRY_DONE';
+const PROGRESS_STEP_DONE = 'DONE';
+const PROGRESS_STEP_ORDER = [
+    PROGRESS_STEP_APP_CREATED,
+    PROGRESS_STEP_ADS_DONE,
+    PROGRESS_STEP_APP_ACCESS_DONE,
+    PROGRESS_STEP_AUDIENCE_DONE,
+    PROGRESS_STEP_AD_ID_DONE,
+    PROGRESS_STEP_GOV_DONE,
+    PROGRESS_STEP_FINANCE_DONE,
+    PROGRESS_STEP_HEALTH_DONE,
+    PROGRESS_STEP_COUNTRY_DONE,
+    PROGRESS_STEP_DONE
+];
+const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
@@ -183,6 +210,126 @@ function pickHeader(headers, candidates) {
     return null;
 }
 
+function normalizeStatusValue(value) {
+    const text = String(value || '').trim().toUpperCase();
+    if (text === STATUS_DONE) return STATUS_DONE;
+    if (text === STATUS_PARTIAL) return STATUS_PARTIAL;
+    return '';
+}
+
+function normalizeProgressStep(value) {
+    const text = String(value || '').trim().toUpperCase();
+    if (PROGRESS_STEP_SET.has(text)) return text;
+    return '';
+}
+
+function progressRank(step) {
+    return PROGRESS_STEP_ORDER.indexOf(normalizeProgressStep(step));
+}
+
+function getCellText(sheet, rowIndex, colIndex) {
+    const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+    const cell = sheet[address];
+    if (!cell || cell.v === undefined || cell.v === null) {
+        return '';
+    }
+    return String(cell.v).trim();
+}
+
+function setCellText(sheet, rowIndex, colIndex, text) {
+    const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+    sheet[address] = { t: 's', v: String(text || '') };
+}
+
+function createExcelStatusManager({
+    filePath,
+    workbook,
+    sheetName,
+    sheet,
+    statusColumnIndex,
+    progressColumnIndex
+}) {
+    function saveWorkbook() {
+        XLSX.writeFile(workbook, filePath);
+    }
+
+    return {
+        saveWorkbook,
+        updateTaskStatus(task, status) {
+            const nextStatus = normalizeStatusValue(status);
+            if (!nextStatus) {
+                throw new Error(`Invalid status "${status}" for row ${task.rowNumber}.`);
+            }
+
+            const currentStatus = normalizeStatusValue(getCellText(sheet, task.sheetRowIndex, statusColumnIndex));
+            if (currentStatus === nextStatus) {
+                task.status = nextStatus;
+                return;
+            }
+
+            setCellText(sheet, task.sheetRowIndex, statusColumnIndex, nextStatus);
+            saveWorkbook();
+            task.status = nextStatus;
+
+            console.log(
+                `[STATUS] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ` +
+                `${currentStatus || 'EMPTY'} -> ${nextStatus}`
+            );
+        },
+        getTaskStatus(task) {
+            return normalizeStatusValue(getCellText(sheet, task.sheetRowIndex, statusColumnIndex));
+        },
+        updateTaskProgress(task, step) {
+            const nextStep = normalizeProgressStep(step);
+            if (!nextStep) {
+                throw new Error(`Invalid progress step "${step}" for row ${task.rowNumber}.`);
+            }
+
+            const currentStep = normalizeProgressStep(getCellText(sheet, task.sheetRowIndex, progressColumnIndex));
+            if (currentStep === nextStep) {
+                task.progressStep = nextStep;
+                return;
+            }
+
+            setCellText(sheet, task.sheetRowIndex, progressColumnIndex, nextStep);
+            saveWorkbook();
+            task.progressStep = nextStep;
+
+            console.log(
+                `[PROGRESS] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ` +
+                `${currentStep || 'EMPTY'} -> ${nextStep}`
+            );
+        },
+        ensureTaskProgressAtLeast(task, step) {
+            const nextStep = normalizeProgressStep(step);
+            if (!nextStep) {
+                throw new Error(`Invalid progress step "${step}" for row ${task.rowNumber}.`);
+            }
+
+            const currentStep = normalizeProgressStep(getCellText(sheet, task.sheetRowIndex, progressColumnIndex));
+            if (progressRank(currentStep) >= progressRank(nextStep)) {
+                task.progressStep = currentStep || task.progressStep;
+                return;
+            }
+
+            setCellText(sheet, task.sheetRowIndex, progressColumnIndex, nextStep);
+            saveWorkbook();
+            task.progressStep = nextStep;
+
+            console.log(
+                `[PROGRESS] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ` +
+                `${currentStep || 'EMPTY'} -> ${nextStep}`
+            );
+        },
+        getTaskProgress(task) {
+            return normalizeProgressStep(getCellText(sheet, task.sheetRowIndex, progressColumnIndex));
+        },
+        statusColumnIndex,
+        progressColumnIndex,
+        sheetName
+    };
+}
+
 function loadTasksFromExcel(filePath) {
     const workbook = XLSX.readFile(filePath);
     const firstSheetName = workbook.SheetNames[0];
@@ -191,32 +338,96 @@ function loadTasksFromExcel(filePath) {
     }
 
     const sheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
-    if (!rows.length) {
-        throw new Error(`Excel sheet "${firstSheetName}" has no data rows.`);
+    const ref = sheet['!ref'];
+    if (!ref) {
+        throw new Error(`Excel sheet "${firstSheetName}" is empty.`);
+    }
+    const range = XLSX.utils.decode_range(ref);
+    const headerRowIndex = range.s.r;
+
+    const headers = [];
+    let appNameColumnIndex = -1;
+    let packageNameColumnIndex = -1;
+    let statusColumnIndex = -1;
+    let progressColumnIndex = -1;
+
+    for (let c = range.s.c; c <= range.e.c; c++) {
+        const headerValue = getCellText(sheet, headerRowIndex, c);
+        headers.push(headerValue);
+        const normalized = normalizeHeader(headerValue);
+        if (appNameColumnIndex < 0 && APP_NAME_HEADER_CANDIDATES.has(normalized)) {
+            appNameColumnIndex = c;
+        }
+        if (packageNameColumnIndex < 0 && PACKAGE_NAME_HEADER_CANDIDATES.has(normalized)) {
+            packageNameColumnIndex = c;
+        }
+        if (statusColumnIndex < 0 && STATUS_HEADER_CANDIDATES.has(normalized)) {
+            statusColumnIndex = c;
+        }
+        if (progressColumnIndex < 0 && PROGRESS_HEADER_CANDIDATES.has(normalized)) {
+            progressColumnIndex = c;
+        }
     }
 
-    const headers = Object.keys(rows[0]);
-    const appNameHeader = pickHeader(headers, APP_NAME_HEADER_CANDIDATES);
-    const packageNameHeader = pickHeader(headers, PACKAGE_NAME_HEADER_CANDIDATES);
-
-    if (!appNameHeader || !packageNameHeader) {
+    if (appNameColumnIndex < 0 || packageNameColumnIndex < 0) {
         throw new Error(
             `Missing required columns. Found headers: ${headers.join(', ')}. ` +
             'Need columns like: 应用名称 / 应用包名 (or App Name / App Package Name).'
         );
     }
 
+    let statusColumnAdded = false;
+    if (statusColumnIndex < 0) {
+        statusColumnIndex = range.e.c + 1;
+        setCellText(sheet, headerRowIndex, statusColumnIndex, 'status');
+        range.e.c = statusColumnIndex;
+        sheet['!ref'] = XLSX.utils.encode_range(range);
+        statusColumnAdded = true;
+        console.log('[STATUS] Added "status" column automatically.');
+    }
+
+    let progressColumnAdded = false;
+    if (progressColumnIndex < 0) {
+        progressColumnIndex = range.e.c + 1;
+        setCellText(sheet, headerRowIndex, progressColumnIndex, 'progress_step');
+        range.e.c = progressColumnIndex;
+        sheet['!ref'] = XLSX.utils.encode_range(range);
+        progressColumnAdded = true;
+        console.log('[PROGRESS] Added "progress_step" column automatically.');
+    }
+
+    const statusManager = createExcelStatusManager({
+        filePath,
+        workbook,
+        sheetName: firstSheetName,
+        sheet,
+        statusColumnIndex,
+        progressColumnIndex
+    });
+
+    if (statusColumnAdded || progressColumnAdded) {
+        statusManager.saveWorkbook();
+    }
+
     const tasks = [];
 
-    rows.forEach((row, idx) => {
-        const excelRowNumber = idx + 2; // Excel 行号（从 1 开始，包含表头）
-        const appName = String(row[appNameHeader] || '').trim();
-        const rawPackageName = String(row[packageNameHeader] || '').trim();
+    for (let r = headerRowIndex + 1; r <= range.e.r; r++) {
+        const excelRowNumber = r + 1;
+        const appName = getCellText(sheet, r, appNameColumnIndex);
+        const rawPackageName = getCellText(sheet, r, packageNameColumnIndex);
         const packageName = rawPackageName.toLowerCase();
+        let status = normalizeStatusValue(getCellText(sheet, r, statusColumnIndex));
+        let progressStep = normalizeProgressStep(getCellText(sheet, r, progressColumnIndex));
+
+        if (status === STATUS_DONE && !progressStep) {
+            progressStep = PROGRESS_STEP_DONE;
+        }
+        if (status !== STATUS_DONE && progressStep) {
+            status = STATUS_PARTIAL;
+        }
 
         if (!appName && !packageName) {
-            return;
+            continue;
         }
 
         if (!appName || !packageName) {
@@ -237,15 +448,18 @@ function loadTasksFromExcel(filePath) {
         tasks.push({
             appName,
             packageName,
-            rowNumber: excelRowNumber
+            rowNumber: excelRowNumber,
+            sheetRowIndex: r,
+            status,
+            progressStep
         });
-    });
+    }
 
     if (!tasks.length) {
         throw new Error(`No valid rows found in sheet "${firstSheetName}".`);
     }
 
-    return { tasks, sheetName: firstSheetName };
+    return { tasks, sheetName: firstSheetName, statusManager };
 }
 
 function formatDuration(totalSeconds) {
@@ -274,7 +488,7 @@ async function waitForEnabled(locator, timeoutMs = 15000) {
     return false;
 }
 
-// 全局重试包装器，用于 UI 交互
+// Global retry wrapper for UI interactions.
 function getCdpEndpoints() {
     const configured = String(process.env[CDP_ENDPOINT_ENV] || '').trim();
     if (configured) {
@@ -326,62 +540,140 @@ async function retryAction(action, label = 'action', retries = 3) {
 
 async function waitSaved(page) {
     console.log('Waiting for save confirmation...');
-    // 宽松匹配各种 “saved” 提示（不区分大小写）
+    // Loosely match various "saved" messages (case-insensitive).
     try {
         await page.locator('text=/saved/i').first().waitFor({ state: 'visible', timeout: 30000 });
         console.log('Save detected.');
     } catch (e) {
         console.log('Save confirmation timeout, continuing...');
     }
-    await delay(page, 5000); // 保存后额外等待，给后端处理留时间
+    await delay(page, 5000); // Extra wait after save to allow backend processing.
 }
 
-async function runOnce(task, appListUrl) {
+async function runOnce(task, appListUrl, statusManager) {
     const startTime = Date.now();
     const appName = task.appName;
     const packageName = task.packageName;
-    console.log(`Creating app. Name="${appName}", Package="${packageName}"`);
+    console.log(
+        `Running task. Name="${appName}", Package="${packageName}", ` +
+        `Status="${task.status || 'EMPTY'}", Progress="${task.progressStep || 'EMPTY'}"`
+    );
 
     let browser;
+    let page;
     try {
         const cdpConnection = await connectBrowserOverCdp();
         browser = cdpConnection.browser;
         console.log(`Connected via CDP: ${cdpConnection.endpoint}`);
         const context = browser.contexts()[0];
-        let page = context.pages().find(p => p.url().includes('play.google.com'));
+        page = context.pages().find(p => p.url().includes('play.google.com'));
 
         if (!page) {
             page = await context.newPage();
         }
 
         await page.bringToFront();
-        page.setDefaultTimeout(60000); // 设置页面全局超时为 60 秒
+        page.setDefaultTimeout(60000); // Set page-wide timeout to 60s.
 
-        // 先进入开发者账户列表页
-        console.log('Navigating to developer picker page...');
-        await page.goto('https://play.google.com/console/u/0/developers', { timeout: 90000, waitUntil: 'domcontentloaded' });
-        await delay(page, 8000);
+        let appBasePath = '';
+        const extractAppBasePathFromCurrentUrl = () => {
+            const currentUrl = page.url();
+            const baseMatch = currentUrl.match(/(.*\/app\/\d+)/);
+            if (!baseMatch) {
+                throw new Error('Could not extract app base path from URL: ' + currentUrl);
+            }
+            return baseMatch[1];
+        };
 
-        // 检查是否在开发者选择页面，如果是，则点击第一个开发者项
-        const devItem = page.locator('developer-item, [debug-id="all-developers"]').first();
-        if (await devItem.isVisible().catch(() => false)) {
-            console.log('Developer picker detected, clicking first developer item...');
-            await devItem.click();
-            await delay(page, 10000);
+        const openAppListPage = async () => {
+            const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
+
+            // Reuse existing session/page when already on app list.
+            if (await createBtn.isVisible().catch(() => false)) {
+                console.log('App list already open, reusing current session.');
+                return;
+            }
+
+            const ensureDeveloperSelectedIfNeeded = async () => {
+                const devItem = page.locator('developer-item, [debug-id="all-developers"]').first();
+                if (await devItem.isVisible().catch(() => false)) {
+                    console.log('Developer picker detected, clicking first developer item...');
+                    await devItem.click();
+                    await delay(page, 7000);
+                }
+            };
+
+            console.log('Opening app list page...');
+            await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' });
+            await delay(page, 4000);
+            await ensureDeveloperSelectedIfNeeded();
+
+            // Some accounts redirect through picker/home once; enforce app-list one more time.
+            if (!(await createBtn.isVisible().catch(() => false))) {
+                console.log('App list not ready yet, retrying app-list navigation...');
+                await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' });
+                await delay(page, 4000);
+                await ensureDeveloperSelectedIfNeeded();
+            }
+        };
+
+        const openExistingAppForPartial = async () => {
+            console.log(`[RESUME] status=PARTIAL, locating existing app: ${appName} / ${packageName}`);
+            const searchInput = page.locator(
+                'input[placeholder*="Search by app or package"], input[aria-label*="Search by app or package"], input[type="search"]'
+            ).first();
+            if (await searchInput.isVisible().catch(() => false)) {
+                await searchInput.fill(packageName);
+                await delay(page, 1200);
+            }
+
+            const appTextContainer = page.locator('div.text-container')
+                .filter({ hasText: appName })
+                .filter({ hasText: packageName })
+                .first();
+
+            await retryAction(async () => {
+                await appTextContainer.waitFor({ state: 'visible', timeout: 20000 });
+            }, 'Find PARTIAL app row', 2);
+
+            let viewAppBtn = appTextContainer.locator(
+                'xpath=ancestor::tr[1]//*[self::a or self::button or @role="button"][contains(normalize-space(.), "View app")]'
+            ).first();
+
+            if (!(await viewAppBtn.isVisible().catch(() => false))) {
+                viewAppBtn = page.locator('a:has-text("View app"), button:has-text("View app"), [role="button"]:has-text("View app")').first();
+            }
+
+            await retryAction(async () => {
+                await viewAppBtn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
+                await viewAppBtn.click({ timeout: 10000 });
+            }, 'Click View app for PARTIAL row', 2);
+
+            try {
+                await page.waitForURL(/\/app\/\d+/, { timeout: 60000 });
+            } catch (_) {
+                console.log('Warning: URL did not switch to app details in time, continuing...');
+            }
+            await delay(page, 4000);
+            appBasePath = extractAppBasePathFromCurrentUrl();
+            console.log('[RESUME] App path:', appBasePath);
+        };
+
+        await openAppListPage();
+
+        if (task.status === STATUS_PARTIAL) {
+            await openExistingAppForPartial();
+            statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
+            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
         } else {
-            console.log('No picker detected or already redirected, moving to app list...');
-            await page.goto(appListUrl, { timeout: 60000, waitUntil: 'domcontentloaded' });
-            await delay(page, 5000);
-        }
-
-        console.log('Clicking "Create app" button on list page...');
+            console.log('Clicking "Create app" button on list page...');
         const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
         await retryAction(async () => {
             await createBtn.click({ timeout: 10000 });
         }, 'Click Create App button');
         await delay(page, 10000);
 
-        // 填写应用名称和包名
+        // Fill app name and package name.
         console.log('Filling App name...');
         const appNameInput = page.locator(
             '[debug-id="app-name-input"] input, input[aria-label="App name"]'
@@ -418,7 +710,7 @@ async function runOnce(task, appListUrl) {
             console.log('Warning: Check availability button not found, continuing...');
         }
 
-        // 随机选择 App 或 Game
+        // Randomly choose App or Game.
         const isApp = Math.random() < 0.5;
         const typeLabel = isApp ? 'App' : 'Game';
         const typeId = isApp ? 'app-radio' : 'game-radio';
@@ -428,14 +720,14 @@ async function runOnce(task, appListUrl) {
         }, `Select type: ${typeLabel}`);
         await delay(page, 2000);
 
-        // 选择 Free
+        // Select Free.
         console.log('Selecting mode: Free');
         await retryAction(async () => {
             await page.getByText('Free', { exact: true }).first().click({ timeout: 5000 });
         }, 'Select Free mode');
         await delay(page, 2000);
 
-        // 勾选声明项
+        // Tick required declarations.
         console.log('Checking policy declarations...');
         const declarationCheckboxes = [
             '[debug-id="guidelines-checkbox"]',
@@ -462,7 +754,7 @@ async function runOnce(task, appListUrl) {
 
         await delay(page);
 
-        // 点击 Create
+        // Click Create.
         console.log('Clicking "Create" submit button...');
         const submitBtn = page.locator('material-button[debug-id="create-app-button"] button').first();
         await retryAction(async () => {
@@ -473,16 +765,16 @@ async function runOnce(task, appListUrl) {
         console.log('App created successfully, navigating to dashboard...');
         await delay(page, 8000);
 
-        // 提取应用基础路径
-        const currentUrl = page.url();
-        const baseMatch = currentUrl.match(/(.*\/app\/\d+)/);
-        if (!baseMatch) {
-            throw new Error('Could not extract app base path from URL: ' + currentUrl);
-        }
-        const appBasePath = baseMatch[1];
-        console.log('App path:', appBasePath);
+            // Extract app base path.
+            appBasePath = extractAppBasePathFromCurrentUrl();
+            console.log('App path:', appBasePath);
 
-        // --- 闭包内辅助函数 ---
+            // Package exists in Play Console now; persist PARTIAL for safe resume.
+            statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
+            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
+        }
+
+        // --- Helper functions inside this run ---
         async function goToAppContent() {
             await page.goto(appBasePath + '/app-content/overview', { timeout: 90000, waitUntil: 'domcontentloaded' });
             await delay(page, 8000);
@@ -494,10 +786,22 @@ async function runOnce(task, appListUrl) {
         }
 
         async function clickStartDeclaration(sectionTitle) {
-            const button = page.locator(`button[aria-label="Start ${sectionTitle} declaration"]`);
+            const buttonByAria = page.locator(
+                `button[aria-label="Start ${sectionTitle} declaration"], button[aria-label*="Start ${sectionTitle} declaration"]`
+            ).first();
+            const buttonByCard = page.locator(
+                `xpath=//*[normalize-space(text())="${sectionTitle}"]/ancestor::*[.//button[contains(normalize-space(.), "Start declaration")]][1]//button[contains(normalize-space(.), "Start declaration")]`
+            ).first();
             await retryAction(async () => {
-                await button.scrollIntoViewIfNeeded({ timeout: 5000 });
-                await button.click({ timeout: 10000 });
+                if (await buttonByAria.isVisible().catch(() => false)) {
+                    await buttonByAria.scrollIntoViewIfNeeded({ timeout: 5000 });
+                    await buttonByAria.click({ timeout: 10000 });
+                    return;
+                }
+
+                await buttonByCard.waitFor({ state: 'visible', timeout: 12000 });
+                await buttonByCard.scrollIntoViewIfNeeded({ timeout: 5000 });
+                await buttonByCard.click({ timeout: 10000 });
             }, `Start ${sectionTitle} declaration`);
             await delay(page, 8000);
         }
@@ -558,203 +862,364 @@ async function runOnce(task, appListUrl) {
             }, `Click "${text}" button`);
         }
 
-        // --- 执行声明流程 ---
-        await goToAppContent();
+        async function getDeclarationCardState(sectionTitle) {
+            const startByAria = await page.locator(
+                `button[aria-label="Start ${sectionTitle} declaration"], button[aria-label*="Start ${sectionTitle} declaration"]`
+            ).count().catch(() => 0);
+            if (startByAria > 0) {
+                return 'pending';
+            }
 
-        // 1. 广告
-        console.log('Executing declaration 1/7: Ads...');
-        await clickStartDeclaration('Ads');
-        await selectRadio(/^No/);
-        await clickMainButton('Save');
-        await waitSaved(page);
-        await goToAppContent();
+            const startByCard = await page.locator(
+                `xpath=//*[normalize-space(text())="${sectionTitle}"]/ancestor::*[.//button[contains(normalize-space(.), "Start declaration")]][1]//button[contains(normalize-space(.), "Start declaration")]`
+            ).count().catch(() => 0);
+            if (startByCard > 0) {
+                return 'pending';
+            }
 
-        // 2. 应用访问权限
-        console.log('Executing declaration 2/7: App access...');
-        await clickStartDeclaration('App access');
-        await selectRadio('All functionality in my app is available without any access restrictions');
-        await clickMainButton('Save');
-        await waitSaved(page);
-        await goToAppContent();
+            const titleCount = await page.locator(
+                `xpath=//*[normalize-space(text())="${sectionTitle}"]`
+            ).count().catch(() => 0);
+            if (titleCount > 0) {
+                return 'done';
+            }
 
-        // 3. 目标受众和内容
-        console.log('Executing declaration 3/7: Target audience and content...');
-        await clickStartDeclaration('Target audience and content');
-        await selectCheckbox('13-15');
-        await selectCheckbox('16-17');
-        await selectCheckbox('18 and over');
-        await clickMainButton('Next');
+            // Not shown on current page: treat as already completed / currently irrelevant.
+            return 'absent';
+        }
 
-        let stepsLeft = 5;
-        while (stepsLeft-- > 0) {
-            const appealText = "Could your store listing unintentionally appeal to children?";
-            if (await page.locator(`text=${appealText}`).first().isVisible().catch(() => false)) {
-                console.log('Handling child appeal question...');
+        async function syncProgressStepFromUiIfPossible() {
+            if (task.status !== STATUS_PARTIAL) {
+                return;
+            }
+
+            await goToAppContent();
+
+            const checkpoints = [
+                { title: 'Ads', step: PROGRESS_STEP_ADS_DONE },
+                { title: 'App access', step: PROGRESS_STEP_APP_ACCESS_DONE },
+                { title: 'Target audience and content', step: PROGRESS_STEP_AUDIENCE_DONE },
+                { title: 'Advertising ID', step: PROGRESS_STEP_AD_ID_DONE },
+                { title: 'Government apps', step: PROGRESS_STEP_GOV_DONE },
+                { title: 'Financial features', step: PROGRESS_STEP_FINANCE_DONE },
+                { title: 'Health apps', step: PROGRESS_STEP_HEALTH_DONE }
+            ];
+
+            let detectedStep = '';
+            for (const checkpoint of checkpoints) {
+                const state = await getDeclarationCardState(checkpoint.title);
+                if (state === 'pending') {
+                    break;
+                }
+                if (state === 'done' || state === 'absent') {
+                    detectedStep = checkpoint.step;
+                    continue;
+                }
+                break;
+            }
+
+            if (detectedStep && progressRank(detectedStep) > progressRank(task.progressStep)) {
+                statusManager.ensureTaskProgressAtLeast(task, detectedStep);
+                statusManager.updateTaskStatus(task, STATUS_PARTIAL);
+                console.log(`[RESUME] UI checkpoint detected, progress corrected to ${detectedStep}.`);
+            }
+        }
+
+        // --- Execute declarations flow with fine-grained checkpoint resume ---
+        const shouldRunStep = (doneStep) => progressRank(task.progressStep) < progressRank(doneStep);
+        const markStepDone = (doneStep) => {
+            statusManager.updateTaskProgress(task, doneStep);
+            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
+        };
+
+        await syncProgressStepFromUiIfPossible();
+
+        if (shouldRunStep(PROGRESS_STEP_ADS_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('Ads') === 'pending') {
+                console.log('Executing declaration 1/7: Ads...');
+                await clickStartDeclaration('Ads');
                 await selectRadio(/^No/);
-            }
-            const isSaveVisible = await page.locator('button:has-text("Save"), [debug-id="main-button"]:has-text("Save")').first().isVisible().catch(() => false);
-            if (isSaveVisible) {
                 await clickMainButton('Save');
-                break;
-            }
-            const isNextVisible = await page.locator('button:has-text("Next"), [debug-id="main-button"]:has-text("Next")').first().isVisible().catch(() => false);
-            if (isNextVisible) {
-                await clickMainButton('Next');
+                await waitSaved(page);
             } else {
-                console.log('Warning: Target Audience path reached end or got stuck.');
-                break;
+                console.log('[RESUME] Ads not pending on UI, skip filling.');
             }
+            markStepDone(PROGRESS_STEP_ADS_DONE);
+        } else {
+            console.log(`[RESUME] Skip Ads (already >= ${task.progressStep}).`);
         }
-        await waitSaved(page);
-        await goToAppContent();
 
-        // 4. 广告 ID
-        console.log('Executing declaration 4/7: Advertising ID...');
-        await clickStartDeclaration('Advertising ID');
-        await selectRadio(/^Yes/);
-        await selectCheckbox('Developer communications');
-        await clickMainButton('Save');
-        await waitSaved(page);
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await delay(page, 2000);
-        await goToAppContent();
-
-        // 5. 政府应用
-        console.log('Executing declaration 5/7: Government apps...');
-        await clickStartDeclaration('Government apps');
-        await selectRadio(/^No/);
-        await clickMainButton('Save');
-        await waitSaved(page);
-        await goToAppContent();
-
-        // 6. 金融功能
-        console.log('Executing declaration 6/7: Financial features...');
-        await clickStartDeclaration('Financial features');
-        await selectCheckbox("My app doesn't provide any financial features");
-        await clickMainButton('Next');
-        await clickMainButton('Save');
-        await waitSaved(page);
-        await goToAppContent();
-
-        // 7. 健康应用
-        console.log('Executing declaration 7/7: Health apps...');
-        await clickStartDeclaration('Health apps');
-        await selectCheckbox('My app does not have any health features');
-        await clickMainButton('Next');
-        await clickMainButton('Save');
-        await waitSaved(page);
-        await goToAppContent();
-
-        // 8. Test and release
-        console.log('Navigating to "Test and release"...');
-        const testAndReleaseLink = page.locator(
-            'a[href*="/test-and-release"], a.item-link:has(.item-label:has-text("Test and release"))'
-        ).first();
-        await retryAction(async () => {
-            await testAndReleaseLink.waitFor({ state: 'visible', timeout: 20000 });
-            await testAndReleaseLink.scrollIntoViewIfNeeded({ timeout: 5000 });
-            await testAndReleaseLink.click({ timeout: 10000 });
-        }, 'Click Test and release');
-        try {
-            await page.waitForURL(/\/test-and-release(?:\/|$)/, { timeout: 60000 });
-        } catch (_) {
-            console.log('Warning: URL did not switch to /test-and-release in time, continuing...');
+        if (shouldRunStep(PROGRESS_STEP_APP_ACCESS_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('App access') === 'pending') {
+                console.log('Executing declaration 2/7: App access...');
+                await clickStartDeclaration('App access');
+                await selectRadio('All functionality in my app is available without any access restrictions');
+                await clickMainButton('Save');
+                await waitSaved(page);
+            } else {
+                console.log('[RESUME] App access not pending on UI, skip filling.');
+            }
+            markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
+        } else {
+            console.log(`[RESUME] Skip App access (already >= ${task.progressStep}).`);
         }
-        await delay(page, 5000);
 
-        // 9. Production
-        console.log('Navigating to "Production"...');
-        const productionLink = page.locator(
-            'a[href*="/tracks/production"], a.item-link:has(.item-label:has-text("Production"))'
-        ).first();
-        await retryAction(async () => {
-            await productionLink.waitFor({ state: 'visible', timeout: 20000 });
-            await productionLink.scrollIntoViewIfNeeded({ timeout: 5000 });
-            await productionLink.click({ timeout: 10000 });
-        }, 'Click Production');
-        try {
-            await page.waitForURL(/\/tracks\/production(?:\/|$)/, { timeout: 60000 });
-        } catch (_) {
-            console.log('Warning: URL did not switch to /tracks/production in time, continuing...');
-        }
-        await delay(page, 5000);
+        if (shouldRunStep(PROGRESS_STEP_AUDIENCE_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('Target audience and content') === 'pending') {
+                console.log('Executing declaration 3/7: Target audience and content...');
+                await clickStartDeclaration('Target audience and content');
+                await selectCheckbox('13-15');
+                await selectCheckbox('16-17');
+                await selectCheckbox('18 and over');
+                await clickMainButton('Next');
 
-        // 10. Countries / regions tab
-        console.log('Opening "Countries / regions" tab...');
-        const countriesRegionsTab = page.locator(
-            '[role="tab"]:has-text("Countries / regions"), a:has-text("Countries / regions"), button:has-text("Countries / regions")'
-        ).first();
-        await retryAction(async () => {
-            await countriesRegionsTab.waitFor({ state: 'visible', timeout: 20000 });
-            await countriesRegionsTab.scrollIntoViewIfNeeded({ timeout: 5000 });
-            await countriesRegionsTab.click({ timeout: 10000 });
-        }, 'Click Countries / regions tab');
-        await delay(page, 3000);
-
-        // 11. Add countries / regions
-        console.log('Clicking "Add countries / regions"...');
-        const addCountriesBtn = page.locator(
-            'button:has-text("Add countries / regions"), [role="button"]:has-text("Add countries / regions"), a:has-text("Add countries / regions"), .mdc-button:has-text("Add countries / regions")'
-        ).first();
-        await retryAction(async () => {
-            await addCountriesBtn.waitFor({ state: 'visible', timeout: 20000 });
-            await addCountriesBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
-            await addCountriesBtn.click({ timeout: 10000 });
-        }, 'Click Add countries / regions');
-        await delay(page, 3000);
-
-        // 12. Select Country / region header checkbox and ensure checked
-        console.log('Selecting "Country / region" checkbox...');
-        const countryRegionHeaderText = page.locator('text=Country / region').first();
-        const countryRegionHeaderRow = page.locator(
-            'tr:has-text("Country / region"), [role="row"]:has-text("Country / region"), div:has-text("Country / region")'
-        ).first();
-        const countryRegionCheckboxInput = countryRegionHeaderRow.locator('input[type="checkbox"]').first();
-        const countryRegionCheckboxTarget = countryRegionHeaderRow.locator('[role="checkbox"], .mdc-checkbox').first();
-
-        await retryAction(async () => {
-            await countryRegionHeaderText.waitFor({ state: 'visible', timeout: 15000 });
-            await countryRegionHeaderRow.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-
-            const checkedBefore = await countryRegionCheckboxInput.isChecked().catch(() => false);
-            if (!checkedBefore) {
-                await countryRegionCheckboxInput.check({ force: true, timeout: 10000 }).catch(async () => {
-                    if (await countryRegionCheckboxTarget.isVisible().catch(() => false)) {
-                        await countryRegionCheckboxTarget.click({ timeout: 10000 });
-                    } else {
-                        await countryRegionHeaderRow.click({ timeout: 10000 });
+                let stepsLeft = 5;
+                while (stepsLeft-- > 0) {
+                    const appealText = "Could your store listing unintentionally appeal to children?";
+                    if (await page.locator(`text=${appealText}`).first().isVisible().catch(() => false)) {
+                        console.log('Handling child appeal question...');
+                        await selectRadio(/^No/);
                     }
-                });
+                    const isSaveVisible = await page.locator('button:has-text("Save"), [debug-id="main-button"]:has-text("Save")').first().isVisible().catch(() => false);
+                    if (isSaveVisible) {
+                        await clickMainButton('Save');
+                        break;
+                    }
+                    const isNextVisible = await page.locator('button:has-text("Next"), [debug-id="main-button"]:has-text("Next")').first().isVisible().catch(() => false);
+                    if (isNextVisible) {
+                        await clickMainButton('Next');
+                    } else {
+                        console.log('Warning: Target Audience path reached end or got stuck.');
+                        break;
+                    }
+                }
+                await waitSaved(page);
+            } else {
+                console.log('[RESUME] Target audience and content not pending on UI, skip filling.');
             }
+            markStepDone(PROGRESS_STEP_AUDIENCE_DONE);
+        } else {
+            console.log(`[RESUME] Skip Target audience and content (already >= ${task.progressStep}).`);
+        }
 
-            const checkedAfter = await countryRegionCheckboxInput.isChecked().catch(() => false);
-            const ariaCheckedAfter = await countryRegionCheckboxTarget.getAttribute('aria-checked').catch(() => null);
-            if (!checkedAfter && ariaCheckedAfter !== 'true') {
-                throw new Error('Country / region checkbox is still not checked.');
+        if (shouldRunStep(PROGRESS_STEP_AD_ID_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('Advertising ID') === 'pending') {
+                console.log('Executing declaration 4/7: Advertising ID...');
+                await clickStartDeclaration('Advertising ID');
+                await selectRadio(/^Yes/);
+                await selectCheckbox('Developer communications');
+                await clickMainButton('Save');
+                await waitSaved(page);
+                await page.evaluate(() => window.scrollTo(0, 0));
+                await delay(page, 2000);
+            } else {
+                console.log('[RESUME] Advertising ID not pending on UI, skip filling.');
             }
-        }, 'Ensure Country / region checkbox checked');
-        await delay(page, 2000);
+            markStepDone(PROGRESS_STEP_AD_ID_DONE);
+        } else {
+            console.log(`[RESUME] Skip Advertising ID (already >= ${task.progressStep}).`);
+        }
 
-        // 13. Save countries/regions selection
-        console.log('Saving countries/regions selection...');
-        await clickMainButton('Save');
+        if (shouldRunStep(PROGRESS_STEP_GOV_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('Government apps') === 'pending') {
+                console.log('Executing declaration 5/7: Government apps...');
+                await clickStartDeclaration('Government apps');
+                await selectRadio(/^No/);
+                await clickMainButton('Save');
+                await waitSaved(page);
+            } else {
+                console.log('[RESUME] Government apps not pending on UI, skip filling.');
+            }
+            markStepDone(PROGRESS_STEP_GOV_DONE);
+        } else {
+            console.log(`[RESUME] Skip Government apps (already >= ${task.progressStep}).`);
+        }
 
-        // 14. Verify success marker: Targeted (N)
-        console.log('Verifying "Targeted (N)" appears...');
-        const targetedBadge = page.locator('span.button-text, button, [role="button"]').filter({
-            hasText: /Targeted\s*\(\d+\)/i
-        }).first();
-        await retryAction(async () => {
-            await targetedBadge.waitFor({ state: 'visible', timeout: 90000 });
-        }, 'Wait for Targeted (N)');
-        await delay(page, 3000);
+        if (shouldRunStep(PROGRESS_STEP_FINANCE_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('Financial features') === 'pending') {
+                console.log('Executing declaration 6/7: Financial features...');
+                await clickStartDeclaration('Financial features');
+                await selectCheckbox("My app doesn't provide any financial features");
+                await clickMainButton('Next');
+                await clickMainButton('Save');
+                await waitSaved(page);
+            } else {
+                console.log('[RESUME] Financial features not pending on UI, skip filling.');
+            }
+            markStepDone(PROGRESS_STEP_FINANCE_DONE);
+        } else {
+            console.log(`[RESUME] Skip Financial features (already >= ${task.progressStep}).`);
+        }
+
+        if (shouldRunStep(PROGRESS_STEP_HEALTH_DONE)) {
+            await goToAppContent();
+            if (await getDeclarationCardState('Health apps') === 'pending') {
+                console.log('Executing declaration 7/7: Health apps...');
+                await clickStartDeclaration('Health apps');
+                await selectCheckbox('My app does not have any health features');
+                await clickMainButton('Next');
+                await clickMainButton('Save');
+                await waitSaved(page);
+            } else {
+                console.log('[RESUME] Health apps not pending on UI, skip filling.');
+            }
+            markStepDone(PROGRESS_STEP_HEALTH_DONE);
+        } else {
+            console.log(`[RESUME] Skip Health apps (already >= ${task.progressStep}).`);
+        }
+
+        if (shouldRunStep(PROGRESS_STEP_COUNTRY_DONE)) {
+            // 8. Test and release
+            console.log('Navigating to "Test and release"...');
+            const testAndReleaseLink = page.locator(
+                'a[href*="/test-and-release"], a.item-link:has(.item-label:has-text("Test and release"))'
+            ).first();
+            await retryAction(async () => {
+                await testAndReleaseLink.waitFor({ state: 'visible', timeout: 20000 });
+                await testAndReleaseLink.scrollIntoViewIfNeeded({ timeout: 5000 });
+                await testAndReleaseLink.click({ timeout: 10000 });
+            }, 'Click Test and release');
+            try {
+                await page.waitForURL(/\/test-and-release(?:\/|$)/, { timeout: 60000 });
+            } catch (_) {
+                console.log('Warning: URL did not switch to /test-and-release in time, continuing...');
+            }
+            await delay(page, 5000);
+
+            // 9. Production
+            console.log('Navigating to "Production"...');
+            const productionLink = page.locator(
+                'a[href*="/tracks/production"], a.item-link:has(.item-label:has-text("Production"))'
+            ).first();
+            await retryAction(async () => {
+                await productionLink.waitFor({ state: 'visible', timeout: 20000 });
+                await productionLink.scrollIntoViewIfNeeded({ timeout: 5000 });
+                await productionLink.click({ timeout: 10000 });
+            }, 'Click Production');
+            try {
+                await page.waitForURL(/\/tracks\/production(?:\/|$)/, { timeout: 60000 });
+            } catch (_) {
+                console.log('Warning: URL did not switch to /tracks/production in time, continuing...');
+            }
+            await delay(page, 5000);
+
+            // 10. Countries / regions tab
+            console.log('Opening "Countries / regions" tab...');
+            const countriesRegionsTab = page.locator(
+                '[role="tab"]:has-text("Countries / regions"), a:has-text("Countries / regions"), button:has-text("Countries / regions")'
+            ).first();
+            await retryAction(async () => {
+                await countriesRegionsTab.waitFor({ state: 'visible', timeout: 20000 });
+                await countriesRegionsTab.scrollIntoViewIfNeeded({ timeout: 5000 });
+                await countriesRegionsTab.click({ timeout: 10000 });
+            }, 'Click Countries / regions tab');
+            await delay(page, 3000);
+
+            // 11. Add countries / regions
+            console.log('Clicking "Add countries / regions"...');
+            const addCountriesBtn = page.locator(
+                'button:has-text("Add countries / regions"), [role="button"]:has-text("Add countries / regions"), a:has-text("Add countries / regions"), .mdc-button:has-text("Add countries / regions")'
+            ).first();
+            await retryAction(async () => {
+                await addCountriesBtn.waitFor({ state: 'visible', timeout: 20000 });
+                await addCountriesBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
+                await addCountriesBtn.click({ timeout: 10000 });
+            }, 'Click Add countries / regions');
+            await delay(page, 3000);
+
+            // 12. Select all countries/regions (prefer direct "Select all rows" checkbox)
+            console.log('Selecting "Select all rows" checkbox...');
+            const selectAllRowsCheckbox = page.locator(
+                'mat-checkbox[aria-label="Select all rows"][role="checkbox"], [role="checkbox"][aria-label="Select all rows"]'
+            ).first();
+            const countryRegionHeaderRow = page.locator(
+                'tr:has-text("Country / region"), [role="row"]:has-text("Country / region"), div:has-text("Country / region")'
+            ).first();
+            const countryRegionCheckboxInput = countryRegionHeaderRow.locator('input[type="checkbox"]').first();
+            const countryRegionCheckboxTarget = countryRegionHeaderRow.locator('[role="checkbox"], .mdc-checkbox').first();
+
+            await retryAction(async () => {
+                const directVisible = await selectAllRowsCheckbox.isVisible().catch(() => false);
+                if (directVisible) {
+                    await selectAllRowsCheckbox.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
+                    const directCheckedBefore = await selectAllRowsCheckbox.getAttribute('aria-checked').catch(() => null);
+                    if (directCheckedBefore !== 'true') {
+                        await selectAllRowsCheckbox.click({ timeout: 5000, force: true });
+                    }
+
+                    const directCheckedAfter = await selectAllRowsCheckbox.getAttribute('aria-checked').catch(() => null);
+                    if (directCheckedAfter === 'true') {
+                        return;
+                    }
+                }
+
+                // Fallback: old row-based selectors if "Select all rows" is unavailable.
+                await countryRegionHeaderRow.waitFor({ state: 'visible', timeout: 10000 });
+                await countryRegionHeaderRow.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
+
+                const checkedBefore = await countryRegionCheckboxInput.isChecked().catch(() => false);
+                if (!checkedBefore) {
+                    await countryRegionCheckboxInput.check({ force: true, timeout: 5000 }).catch(async () => {
+                        if (await countryRegionCheckboxTarget.isVisible().catch(() => false)) {
+                            await countryRegionCheckboxTarget.click({ timeout: 5000 });
+                        } else {
+                            await countryRegionHeaderRow.click({ timeout: 5000 });
+                        }
+                    });
+                }
+
+                const checkedAfter = await countryRegionCheckboxInput.isChecked().catch(() => false);
+                const ariaCheckedAfter = await countryRegionCheckboxTarget.getAttribute('aria-checked').catch(() => null);
+                if (!checkedAfter && ariaCheckedAfter !== 'true') {
+                    throw new Error('Country / region checkbox is still not checked.');
+                }
+            }, 'Ensure Select all rows checkbox checked', 2);
+            await delay(page, 1000);
+
+            // 13. Save countries/regions selection
+            console.log('Saving countries/regions selection...');
+            await clickMainButton('Save');
+
+            // 14. Verify success marker: Targeted (N)
+            console.log('Verifying "Targeted (N)" appears...');
+            const targetedBadge = page.locator('span.button-text, button, [role="button"]').filter({
+                hasText: /Targeted\s*\(\d+\)/i
+            }).first();
+            await retryAction(async () => {
+                await targetedBadge.waitFor({ state: 'visible', timeout: 90000 });
+            }, 'Wait for Targeted (N)');
+            await delay(page, 3000);
+
+            markStepDone(PROGRESS_STEP_COUNTRY_DONE);
+        } else {
+            console.log(`[RESUME] Skip countries/regions publish step (already >= ${task.progressStep}).`);
+        }
 
         await page.click('text=All apps').catch(() => { });
+
+        statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
+        statusManager.updateTaskStatus(task, STATUS_DONE);
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
         console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
         await browser.close();
     } catch (err) {
+        const currentUrl = (page && typeof page.url === 'function') ? page.url() : '';
+        if (currentUrl && /\/app\/\d+/.test(currentUrl) && task.status !== STATUS_DONE) {
+            try {
+                statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
+                statusManager.updateTaskStatus(task, STATUS_PARTIAL);
+            } catch (_) {
+                // Ignore status write failures in error path; keep original error as primary signal.
+            }
+        }
+
         console.error(`[FATAL ERROR] In iteration: ${err.message}`);
         if (browser) await browser.close().catch(() => { });
         throw err;
@@ -765,21 +1230,31 @@ async function runOnce(task, appListUrl) {
     const { inputFileArg } = parseCliArgs();
     const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
     const inputFilePath = resolveInputExcelFile(inputFileArg);
-    const { tasks, sheetName } = loadTasksFromExcel(inputFilePath);
-    const selectedTasks = tasks;
+    const { tasks, sheetName, statusManager } = loadTasksFromExcel(inputFilePath);
+    const selectedTasks = tasks.filter(task => task.status !== STATUS_DONE);
+    const skippedDone = tasks.length - selectedTasks.length;
 
     console.log(`Developer console URL loaded from: ${configPath}`);
     console.log(`Loaded ${tasks.length} rows from Excel: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
-    console.log(`Will execute ${selectedTasks.length} iteration(s), matching Excel valid rows.`);
+    if (skippedDone > 0) {
+        console.log(`[STATUS] Skipping ${skippedDone} row(s) already marked DONE.`);
+    }
+    console.log(`Will execute ${selectedTasks.length} iteration(s), excluding DONE rows.`);
+
+    if (!selectedTasks.length) {
+        console.log('No pending rows to execute. All rows are DONE.');
+        return;
+    }
 
     for (let i = 0; i < selectedTasks.length; i++) {
         const task = selectedTasks[i];
         console.log(
             `Iteration ${i + 1}/${selectedTasks.length} | Excel row ${task.rowNumber} | ` +
-            `App="${task.appName}" | Package="${task.packageName}"`
+            `App="${task.appName}" | Package="${task.packageName}" | ` +
+            `Status="${task.status || 'EMPTY'}" | Progress="${task.progressStep || 'EMPTY'}"`
         );
         try {
-            await runOnce(task, appListUrl);
+            await runOnce(task, appListUrl, statusManager);
         } catch (e) {
             console.error(`Iteration ${i + 1} failed but continuing...`);
             if (isCdpConnectionError(e)) {
@@ -797,3 +1272,4 @@ async function runOnce(task, appListUrl) {
     console.error(`[INIT ERROR] ${err.message}`);
     process.exit(1);
 });
+

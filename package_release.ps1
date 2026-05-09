@@ -35,6 +35,7 @@ function Main {
             "deploy_windows.ps1",
             "developer_url.txt",
             "release_url.txt",
+            "启动.cmd",
             "tech_ops\README.md",
             "tech_ops\prepare_embedded_node.ps1",
             "tech_ops\release_windows.cmd",

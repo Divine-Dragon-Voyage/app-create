@@ -16,10 +16,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\user_ops\launche
 if errorlevel 1 (
   echo.
   echo Task failed or canceled. Please check the error output above.
-  pause
+  echo Press any key to close...
+  pause >nul
   exit /b 1
 )
 
 echo.
 echo Task finished.
-pause
+exit /b 0
