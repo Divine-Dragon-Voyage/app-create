@@ -80,12 +80,6 @@ function Main {
             Copy-Item -Path $srcDir -Destination $destDir -Recurse -Force
         }
 
-        # Enforce package strategy: do not ship embedded x86 archive by default.
-        $x86RuntimeZips = Get-ChildItem -Path (Join-Path $stagingDir "runtime\node") -Filter "node-v*-win-x86.zip" -File -ErrorAction SilentlyContinue
-        foreach ($zip in $x86RuntimeZips) {
-            Remove-Item -LiteralPath $zip.FullName -Force -ErrorAction SilentlyContinue
-        }
-
         $dateTag = Get-Date -Format "yyyyMMdd-HHmmss"
         $versionZip = Join-Path $outputDirAbs ($ReleaseName + "-" + $dateTag + ".zip")
         $latestZip = Join-Path $outputDirAbs ($ReleaseName + "-latest.zip")

@@ -68,10 +68,10 @@ function Main {
 
     Ensure-Directory -PathValue $TargetDir
 
-    # Default strategy: only embed x64. x86 can be included manually when needed.
-    $archList = @("x64")
+    # Default strategy: embed both x64 and x86 for full offline coverage.
+    $archList = @("x64", "x86")
     if ($IncludeX86) {
-        $archList += "x86"
+        Write-WarnLog "IncludeX86 is now the default behavior and can be omitted."
     }
     $successCount = 0
 

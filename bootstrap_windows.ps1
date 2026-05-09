@@ -184,12 +184,8 @@ function Resolve-EmbeddedNodeArchiveCandidates {
         [Parameter(Mandatory = $true)][string]$PreferredVersion
     )
 
-    # Policy: only ship embedded x64 runtime; x86 is downloaded on demand.
-    if (-not [Environment]::Is64BitOperatingSystem) {
-        return @()
-    }
-
-    $archOrder = @("x64")
+    # Policy: ship both x64 and x86 runtime archives for offline installation.
+    $archOrder = if ([Environment]::Is64BitOperatingSystem) { @("x64", "x86") } else { @("x86") }
     $candidates = New-Object System.Collections.Generic.List[object]
 
     foreach ($arch in $archOrder) {
@@ -233,10 +229,6 @@ function Install-EmbeddedNodeRuntime {
 
     $candidates = Resolve-EmbeddedNodeArchiveCandidates -EmbeddedDir $embeddedDir -PreferredVersion $PreferredVersion
     if (-not $candidates -or $candidates.Count -eq 0) {
-        if (-not [Environment]::Is64BitOperatingSystem) {
-            Write-WarnLog "32-bit OS detected. Embedded x64 runtime is skipped; x86 will be installed online when needed."
-            return $null
-        }
         Write-WarnLog "No embedded Node runtime archive found under: $embeddedDir"
         return $null
     }

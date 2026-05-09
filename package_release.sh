@@ -53,9 +53,6 @@ for dir in "${DIRS[@]}"; do
   fi
 done
 
-# Enforce package strategy: do not ship embedded x86 archive by default.
-rm -f "$STAGING_DIR"/runtime/node/node-v*-win-x86.zip 2>/dev/null || true
-
 DATE_TAG="$(date +%Y%m%d-%H%M%S)"
 VERSION_ZIP="$OUTPUT_DIR/${RELEASE_NAME}-${DATE_TAG}.zip"
 LATEST_ZIP="$OUTPUT_DIR/${RELEASE_NAME}-latest.zip"

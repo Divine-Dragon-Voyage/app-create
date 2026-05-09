@@ -5,5 +5,6 @@
 核心变化：
 
 1. 双击 `user_ops/run_windows.cmd` 后，会弹出可视化窗口。
-2. 每次运行都输入 Developer ID/URL 与本次 Excel 文件路径。
-3. 不再强制要求手工编辑固定配置文件。
+
+2. 运行时输入 ID/URL ，选择本次 Excel 文件路径
+3. 
