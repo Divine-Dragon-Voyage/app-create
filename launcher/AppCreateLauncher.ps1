@@ -162,6 +162,11 @@ function Invoke-Deploy {
         "-DataDir", "`"$DataPath`""
     )
 
+    $launcherEntry = Join-Path $LauncherDir "AppCreateLauncher.cmd"
+    if (Test-Path -LiteralPath $launcherEntry) {
+        $args += @("-ShortcutTargetPath", "`"$launcherEntry`"")
+    }
+
     if ($SkipSetupSwitch) {
         $args += "-SkipSetup"
     }

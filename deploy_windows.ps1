@@ -4,6 +4,7 @@ param(
     [string]$PackageUrl = "",
     [string]$InstallDir = "C:\app-create",
     [string]$DataDir = "C:\app-create-data",
+    [string]$ShortcutTargetPath = "",
     [int]$KeepBackups = 2,
     [switch]$SkipSetup,
     [switch]$AutoLaunchBrowser,
@@ -204,13 +205,26 @@ function Ensure-DataExcelInInstallDir {
 
 function Ensure-DesktopShortcut {
     param(
-        [string]$InstallPath
+        [string]$InstallPath,
+        [string]$PreferredTargetPath = ""
     )
 
     $runScriptPath = Join-Path $InstallPath "user_ops\run_windows.cmd"
     if (-not (Test-Path $runScriptPath)) {
         Write-WarnLog "Skip desktop shortcut: run script not found at $runScriptPath"
         return
+    }
+
+    $shortcutTargetPath = $runScriptPath
+    $shortcutWorkingDir = Join-Path $InstallPath "user_ops"
+    if ($PreferredTargetPath) {
+        if (Test-Path -LiteralPath $PreferredTargetPath) {
+            $shortcutTargetPath = (Resolve-Path -LiteralPath $PreferredTargetPath).Path
+            $shortcutWorkingDir = Split-Path -Parent $shortcutTargetPath
+            Write-Step "Desktop shortcut target set to launcher: $shortcutTargetPath"
+        } else {
+            Write-WarnLog "Preferred shortcut target not found, fallback to run script: $PreferredTargetPath"
+        }
     }
 
     $shortcutFileName = "App Create.lnk"
@@ -238,8 +252,8 @@ function Ensure-DesktopShortcut {
 
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = $runScriptPath
-    $shortcut.WorkingDirectory = Join-Path $InstallPath "user_ops"
+    $shortcut.TargetPath = $shortcutTargetPath
+    $shortcut.WorkingDirectory = $shortcutWorkingDir
     $shortcut.Description = "Double-click to start App Create automation"
     $shortcut.IconLocation = "%SystemRoot%\System32\imageres.dll,2"
     $shortcut.Save()
@@ -337,7 +351,7 @@ function Main {
             Write-WarnLog "Skipped setup step."
         }
 
-        Ensure-DesktopShortcut -InstallPath $InstallDir
+        Ensure-DesktopShortcut -InstallPath $InstallDir -PreferredTargetPath $ShortcutTargetPath
 
         Write-Host ""
         Write-Ok "Deploy finished."

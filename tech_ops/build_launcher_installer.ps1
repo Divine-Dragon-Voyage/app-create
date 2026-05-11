@@ -2,7 +2,8 @@
     [string]$OutputDir = ".\\dist",
     [string]$InstallerBaseName = "AppCreateLauncherSetup",
     [string]$InnoCompilerPath = "",
-    [string]$PackageUrl = ""
+    [string]$PackageUrl = "",
+    [switch]$KeepOldInstallers
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,6 +64,23 @@ function Get-FirstConfigLine {
     }
 
     return $line
+}
+
+function Remove-OldInstallers {
+    param(
+        [string]$TargetDir,
+        [string]$BaseName
+    )
+
+    if (-not (Test-Path -LiteralPath $TargetDir)) {
+        return
+    }
+
+    $oldFiles = Get-ChildItem -LiteralPath $TargetDir -Filter "$BaseName*.exe" -File -ErrorAction SilentlyContinue
+    foreach ($file in $oldFiles) {
+        Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+        Write-Host "[STEP] Removed old launcher installer: $($file.Name)"
+    }
 }
 
 function Main {
@@ -134,6 +152,10 @@ function Main {
 
         $env:APP_CREATE_LAUNCHER_SOURCE = $stagingDir
         $env:APP_CREATE_LAUNCHER_OUTPUT = $outputDirAbs
+
+        if (-not $KeepOldInstallers) {
+            Remove-OldInstallers -TargetDir $outputDirAbs -BaseName $InstallerBaseName
+        }
 
         Write-Host "[STEP] Compiling launcher installer EXE..."
         $isccArgs = @(
