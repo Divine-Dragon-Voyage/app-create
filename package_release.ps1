@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$OutputDir = ".\dist",
     [string]$ReleaseName = "app-create",
     [switch]$IncludeSampleExcel
@@ -38,8 +38,7 @@ function Main {
             "deploy_windows.ps1",
             "developer_url.txt",
             "release_url.txt",
-            "启动.cmd",
-            "使用说明.md",
+            "浣跨敤璇存槑.md",
             "tech_ops\README.md",
             "tech_ops\app_create_launcher_installer.iss",
             "tech_ops\build_launcher_installer.ps1",
