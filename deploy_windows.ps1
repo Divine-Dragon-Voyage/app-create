@@ -214,38 +214,37 @@ function Ensure-DesktopShortcut {
     }
 
     $shortcutFileName = "App Create.lnk"
-    $shortcutTargets = New-Object System.Collections.Generic.List[string]
 
+    # Keep a single desktop shortcut to avoid duplicate icons in Explorer desktop merge view.
     $userDesktop = [Environment]::GetFolderPath("Desktop")
-    if ($userDesktop) {
-        $shortcutTargets.Add((Join-Path $userDesktop $shortcutFileName))
-    }
+    $commonDesktop = [Environment]::GetFolderPath("CommonDesktopDirectory")
+    $cleanupRoots = @($userDesktop, $commonDesktop) | Where-Object { $_ } | Select-Object -Unique
 
-    $publicDesktop = Join-Path $env:PUBLIC "Desktop"
-    if ($env:PUBLIC -and (Test-Path $publicDesktop)) {
-        $shortcutTargets.Add((Join-Path $publicDesktop $shortcutFileName))
-    }
-
-    $uniqueTargets = $shortcutTargets | Select-Object -Unique
-    if (-not $uniqueTargets) {
+    if ($cleanupRoots.Count -eq 0) {
         Write-WarnLog "Skip desktop shortcut: desktop path not found."
         return
     }
 
-    $shell = New-Object -ComObject WScript.Shell
-    foreach ($shortcutPath in $uniqueTargets) {
-        $shortcutDir = Split-Path -Parent $shortcutPath
-        Ensure-Directory -PathValue $shortcutDir
-
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = $runScriptPath
-        $shortcut.WorkingDirectory = Join-Path $InstallPath "user_ops"
-        $shortcut.Description = "Double-click to start App Create automation"
-        $shortcut.IconLocation = "%SystemRoot%\System32\imageres.dll,2"
-        $shortcut.Save()
-
-        Write-Ok "Desktop shortcut ready: $shortcutPath"
+    foreach ($root in $cleanupRoots) {
+        $existing = Get-ChildItem -Path $root -Filter "App Create*.lnk" -File -ErrorAction SilentlyContinue
+        foreach ($item in $existing) {
+            Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+        }
     }
+
+    $targetDesktop = if ($userDesktop) { $userDesktop } else { $commonDesktop }
+    $shortcutPath = Join-Path $targetDesktop $shortcutFileName
+    Ensure-Directory -PathValue $targetDesktop
+
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $runScriptPath
+    $shortcut.WorkingDirectory = Join-Path $InstallPath "user_ops"
+    $shortcut.Description = "Double-click to start App Create automation"
+    $shortcut.IconLocation = "%SystemRoot%\System32\imageres.dll,2"
+    $shortcut.Save()
+
+    Write-Ok "Desktop shortcut ready: $shortcutPath"
 }
 
 function Run-SetupScript {

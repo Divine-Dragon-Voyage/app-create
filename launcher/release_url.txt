@@ -1,0 +1,5 @@
+# Put your package download URL on the first non-comment line.
+# Example (GitHub Releases latest download link):
+# https://github.com/Divine-Dragon-Voyage/app-create/releases/latest/download/app-create-latest.zip
+
+REPLACE_WITH_YOUR_PACKAGE_URL

@@ -7,13 +7,16 @@ cd /d "%ROOT_DIR%"
 echo Select release mode:
 echo   [1] Build zip package
 echo   [2] Build EXE installer (requires Inno Setup 6)
-set /p MODE=Enter 1 or 2 [2]: 
-if "%MODE%"=="" set "MODE=2"
+echo   [3] Build launcher EXE (small, online update)
+set /p MODE=Enter 1, 2 or 3 [3]: 
+if "%MODE%"=="" set "MODE=3"
 
 if "%MODE%"=="1" (
   npm run release:zip:win
-) else (
+) else if "%MODE%"=="2" (
   npm run release:exe:win
+) else (
+  npm run release:launcher:exe:win
 )
 
 if errorlevel 1 (

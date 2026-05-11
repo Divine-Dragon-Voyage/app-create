@@ -18,9 +18,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "$run=[System.IO.Path]::GetFullPath($env:APP_CREATE_RUN_CMD);" ^
   "$workDir=[System.IO.Path]::GetDirectoryName($run);" ^
-  "$desktopList=@([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('CommonDesktopDirectory')) | Where-Object { $_ } | Select-Object -Unique;" ^
+  "$userDesktop=[Environment]::GetFolderPath('Desktop');" ^
+  "$commonDesktop=[Environment]::GetFolderPath('CommonDesktopDirectory');" ^
+  "$cleanupRoots=@($userDesktop,$commonDesktop) | Where-Object { $_ } | Select-Object -Unique;" ^
+  "foreach($root in $cleanupRoots){Get-ChildItem -Path $root -Filter 'App Create*.lnk' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue};" ^
+  "$targetDesktop=if($userDesktop){$userDesktop}else{$commonDesktop};" ^
+  "if(-not $targetDesktop){throw 'Desktop path not found.'};" ^
+  "$shortcutPath=Join-Path $targetDesktop 'App Create.lnk';" ^
   "$shell=New-Object -ComObject WScript.Shell;" ^
-  "foreach($desktop in $desktopList){$shortcutPath=Join-Path $desktop 'App Create.lnk';$shortcut=$shell.CreateShortcut($shortcutPath);$shortcut.TargetPath=$run;$shortcut.WorkingDirectory=$workDir;$shortcut.Description='Double-click to start App Create automation';$shortcut.IconLocation=($env:SystemRoot + '\\System32\\imageres.dll,2');$shortcut.Save()}" >nul
+  "$shortcut=$shell.CreateShortcut($shortcutPath);" ^
+  "$shortcut.TargetPath=$run;" ^
+  "$shortcut.WorkingDirectory=$workDir;" ^
+  "$shortcut.Description='Double-click to start App Create automation';" ^
+  "$shortcut.IconLocation=($env:SystemRoot + '\\System32\\imageres.dll,2');" ^
+  "$shortcut.Save()" >nul
 
 if errorlevel 1 (
   echo [WARN] Failed to create desktop shortcut, continue anyway.
