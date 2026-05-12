@@ -113,27 +113,58 @@ function Save-LauncherState {
     $json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
 
-function Should-CheckNow {
-    param(
-        [object]$State,
-        [int]$IntervalMinutes
-    )
+function Prompt-UpdateDecision {
+    param([string]$InstallPath)
 
-    if ($IntervalMinutes -lt 1) {
-        return $true
+    if (-not [Environment]::UserInteractive) {
+        Write-WarnLog "No interactive desktop session detected. Will update automatically."
+        return "update"
     }
 
-    $lastCheckUtc = [string]$State.lastCheckUtc
-    if (-not $lastCheckUtc) {
-        return $true
-    }
+    $message = @"
+检测到可用新版本，是否立即更新？
+
+是(Y)：立即更新并启动
+否(N)：跳过本次更新，直接启动当前版本
+取消(C)：退出，不启动
+"@
 
     try {
-        $last = [datetime]::Parse($lastCheckUtc).ToUniversalTime()
-        return ((Get-Date).ToUniversalTime() -ge $last.AddMinutes($IntervalMinutes))
+        Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            $message,
+            "App Create 更新提示",
+            [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+            [System.Windows.Forms.MessageBoxIcon]::Question,
+            [System.Windows.Forms.MessageBoxDefaultButton]::Yes
+        )
+
+        if ($result -eq [System.Windows.Forms.DialogResult]::Yes) { return "update" }
+        if ($result -eq [System.Windows.Forms.DialogResult]::No) { return "skip" }
+        return "cancel"
     }
     catch {
-        return $true
+        Write-WarnLog "Cannot show update prompt. Fallback to auto update. Error: $($_.Exception.Message)"
+        return "update"
+    }
+}
+
+function New-LauncherStateSnapshot {
+    param(
+        [object]$CurrentState,
+        [string]$PackageUrlValue,
+        [string]$RemoteFingerprintValue,
+        [bool]$Updated
+    )
+
+    $nowUtc = (Get-Date).ToUniversalTime().ToString("o")
+    $currentLastUpdate = [string]$CurrentState.lastUpdateUtc
+
+    return [pscustomobject]@{
+        packageUrl = $PackageUrlValue
+        remoteFingerprint = if ($RemoteFingerprintValue) { $RemoteFingerprintValue } else { [string]$CurrentState.remoteFingerprint }
+        lastCheckUtc = $nowUtc
+        lastUpdateUtc = if ($Updated) { $nowUtc } else { $currentLastUpdate }
     }
 }
 
@@ -199,6 +230,9 @@ function Main {
     }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    if ($PSBoundParameters.ContainsKey("UpdateCheckIntervalMinutes")) {
+        Write-WarnLog "UpdateCheckIntervalMinutes is ignored. Launcher now checks update on every start."
+    }
 
     $launcherDir = Split-Path -Parent $PSCommandPath
     Ensure-Directory -PathValue $DataDir
@@ -211,17 +245,32 @@ function Main {
     $remoteFingerprint = $null
     $installReady = (Test-Path -LiteralPath $runScript)
     $needsUpdate = $ForceUpdate -or (-not $installReady)
+    $updatedThisRun = $false
 
-    if (-not $needsUpdate -and (Should-CheckNow -State $state -IntervalMinutes $UpdateCheckIntervalMinutes)) {
+    if (-not $needsUpdate) {
         try {
             Write-Step "Checking remote package metadata..."
             $remoteFingerprint = Get-RemoteFingerprint -Url $resolvedUrl
-            if ($remoteFingerprint -ne [string]$state.remoteFingerprint -or $resolvedUrl -ne [string]$state.packageUrl) {
-                $needsUpdate = $true
-                Write-Step "New package detected, update is required."
-            }
-            else {
+            $isNewPackage = ($remoteFingerprint -ne [string]$state.remoteFingerprint -or $resolvedUrl -ne [string]$state.packageUrl)
+
+            if (-not $isNewPackage) {
                 Write-Ok "No update detected, will run local install."
+            } else {
+                Write-Step "New package detected."
+                $decision = Prompt-UpdateDecision -InstallPath $InstallDir
+                if ($decision -eq "update") {
+                    $needsUpdate = $true
+                    Write-Step "User chose to update now."
+                }
+                elseif ($decision -eq "skip") {
+                    Write-WarnLog "User skipped update this time. Will run local install."
+                }
+                else {
+                    Write-WarnLog "User canceled launch."
+                    $state = New-LauncherStateSnapshot -CurrentState $state -PackageUrlValue $resolvedUrl -RemoteFingerprintValue $remoteFingerprint -Updated $false
+                    Save-LauncherState -StateFile $stateFile -State $state
+                    exit 2
+                }
             }
         }
         catch {
@@ -242,23 +291,20 @@ function Main {
         }
 
         Invoke-Deploy -LauncherDir $launcherDir -ResolvedUrl $resolvedUrl -InstallPath $InstallDir -DataPath $DataDir -SkipSetupSwitch:$SkipSetup -AutoLaunchSwitch:$AutoLaunchBrowser
+        $updatedThisRun = $true
 
-        $state = [pscustomobject]@{
-            packageUrl = $resolvedUrl
-            remoteFingerprint = $remoteFingerprint
-            lastCheckUtc = (Get-Date).ToUniversalTime().ToString("o")
-            lastUpdateUtc = (Get-Date).ToUniversalTime().ToString("o")
+        if (-not $remoteFingerprint) {
+            try {
+                $remoteFingerprint = Get-RemoteFingerprint -Url $resolvedUrl
+            }
+            catch {
+                Write-WarnLog "Could not refresh remote metadata after deploy."
+            }
         }
-        Save-LauncherState -StateFile $stateFile -State $state
     }
-    else {
-        $state.lastCheckUtc = (Get-Date).ToUniversalTime().ToString("o")
-        $state.packageUrl = $resolvedUrl
-        if ($remoteFingerprint) {
-            $state.remoteFingerprint = $remoteFingerprint
-        }
-        Save-LauncherState -StateFile $stateFile -State $state
-    }
+
+    $state = New-LauncherStateSnapshot -CurrentState $state -PackageUrlValue $resolvedUrl -RemoteFingerprintValue $remoteFingerprint -Updated $updatedThisRun
+    Save-LauncherState -StateFile $stateFile -State $state
 
     $exitCode = Start-AppRunner -RunScriptPath $runScript
     exit $exitCode
