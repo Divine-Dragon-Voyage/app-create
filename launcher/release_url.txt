@@ -1,1 +1,1 @@
-https://github.com/Divine-Dragon-Voyage/app-create/releases/latest/download/app-create-latest.zip
+https://github.com/Divine-Dragon-Voyage/app-create/archive/refs/heads/main.zip
