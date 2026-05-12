@@ -1,3 +1,1 @@
-# 发布包下载链接（可改成你自己的文件服务器链接）
-# 只读取第一行非空且非 # 开头的内容
-https://github.com/taiwuyang1/app-create/archive/refs/heads/main.zip
+https://github.com/Divine-Dragon-Voyage/app-create/releases/latest/download/app-create-latest.zip

@@ -60,7 +60,7 @@ function Resolve-PackageUrl {
         }
     }
 
-    return "https://github.com/taiwuyang1/app-create/archive/refs/heads/main.zip"
+    throw "Package URL is not configured. Please edit release_url.txt first, or pass -PackageUrl."
 }
 
 function Test-ProjectRoot {

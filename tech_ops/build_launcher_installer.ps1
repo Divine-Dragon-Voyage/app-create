@@ -66,6 +66,42 @@ function Get-FirstConfigLine {
     return $line
 }
 
+function Test-BlockedLegacyUrl {
+    param([string]$UrlValue)
+
+    if (-not $UrlValue) {
+        return $false
+    }
+
+    $normalized = $UrlValue.Trim().ToLowerInvariant()
+    return $normalized -eq "https://github.com/taiwuyang1/app-create/archive/refs/heads/main.zip"
+}
+
+function Validate-PackageUrlOrThrow {
+    param([string]$UrlValue)
+
+    if (-not $UrlValue) {
+        throw "Package URL is empty. Please set release_url.txt or pass -PackageUrl explicitly."
+    }
+
+    if ($UrlValue -match "REPLACE_WITH") {
+        throw "Package URL contains placeholder text. Please replace it with your real package URL."
+    }
+
+    if (Test-BlockedLegacyUrl -UrlValue $UrlValue) {
+        throw "Blocked legacy URL detected ($UrlValue). Please switch to your own release URL before building launcher EXE."
+    }
+
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($UrlValue, [System.UriKind]::Absolute, [ref]$uri)) {
+        throw "Package URL is invalid: $UrlValue"
+    }
+
+    if ($uri.Scheme -notin @("http", "https")) {
+        throw "Package URL must use http/https: $UrlValue"
+    }
+}
+
 function Remove-OldInstallers {
     param(
         [string]$TargetDir,
@@ -130,14 +166,11 @@ function Main {
         if (-not $resolvedUrl) {
             $resolvedUrl = Get-FirstConfigLine -FilePath (Join-Path $launcherDir "release_url.txt")
         }
+        Validate-PackageUrlOrThrow -UrlValue $resolvedUrl
+        Write-Host "[STEP] Launcher package URL: $resolvedUrl"
 
         $releaseFile = Join-Path $stagingDir "release_url.txt"
-        if ($resolvedUrl) {
-            Set-Content -LiteralPath $releaseFile -Value $resolvedUrl -Encoding ASCII
-        }
-        else {
-            Copy-Item -LiteralPath (Join-Path $launcherDir "release_url.txt") -Destination $releaseFile -Force
-        }
+        Set-Content -LiteralPath $releaseFile -Value $resolvedUrl -Encoding ASCII
 
         $appVersion = "1.0.0"
         $packageJsonPath = Join-Path $projectDir "package.json"
