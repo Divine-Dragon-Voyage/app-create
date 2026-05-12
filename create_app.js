@@ -250,6 +250,16 @@ function setCellText(sheet, rowIndex, colIndex, text) {
     sheet[address] = { t: 's', v: String(text || '') };
 }
 
+function isCsvInputFile(filePath) {
+    return path.extname(String(filePath || '')).toLowerCase() === '.csv';
+}
+
+function saveSheetAsCsv(filePath, sheet) {
+    const csvText = XLSX.utils.sheet_to_csv(sheet);
+    const csvWithBom = '\uFEFF' + csvText;
+    fs.writeFileSync(filePath, csvWithBom, 'utf8');
+}
+
 function createExcelStatusManager({
     filePath,
     workbook,
@@ -259,6 +269,10 @@ function createExcelStatusManager({
     progressColumnIndex
 }) {
     function saveWorkbook() {
+        if (isCsvInputFile(filePath)) {
+            saveSheetAsCsv(filePath, sheet);
+            return;
+        }
         XLSX.writeFile(workbook, filePath);
     }
 
