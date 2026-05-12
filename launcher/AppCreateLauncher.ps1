@@ -131,12 +131,12 @@ function Prompt-UpdateDecision {
 
     try {
         Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        # Use 4-argument overload for better compatibility on older PowerShell/.NET environments.
         $result = [System.Windows.Forms.MessageBox]::Show(
             $message,
             "App Create 更新提示",
             [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
-            [System.Windows.Forms.MessageBoxIcon]::Question,
-            [System.Windows.Forms.MessageBoxDefaultButton]::Yes
+            [System.Windows.Forms.MessageBoxIcon]::Question
         )
 
         if ($result -eq [System.Windows.Forms.DialogResult]::Yes) { return "update" }
@@ -144,8 +144,30 @@ function Prompt-UpdateDecision {
         return "cancel"
     }
     catch {
-        Write-WarnLog "Cannot show update prompt. Fallback to auto update. Error: $($_.Exception.Message)"
-        return "update"
+        Write-WarnLog "Cannot show GUI update prompt. Fallback to console prompt. Error: $($_.Exception.Message)"
+        try {
+            Write-Host ""
+            Write-Host "检测到新版本。请选择："
+            Write-Host "  Y = 立即更新（默认）"
+            Write-Host "  N = 跳过本次更新"
+            Write-Host "  C = 取消启动"
+            $inputValue = (Read-Host "请输入 Y/N/C").Trim().ToUpperInvariant()
+            if ([string]::IsNullOrWhiteSpace($inputValue) -or $inputValue -eq "Y") {
+                return "update"
+            }
+            if ($inputValue -eq "N") {
+                return "skip"
+            }
+            if ($inputValue -eq "C") {
+                return "cancel"
+            }
+            Write-WarnLog "Unknown input '$inputValue', fallback to update."
+            return "update"
+        }
+        catch {
+            Write-WarnLog "Console prompt failed. Fallback to auto update. Error: $($_.Exception.Message)"
+            return "update"
+        }
     }
 }
 
@@ -206,9 +228,9 @@ function Invoke-Deploy {
     }
 
     Write-Step "Running online deploy..."
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList $args -Wait -PassThru
-    if ($process.ExitCode -ne 0) {
-        throw "Deploy failed with exit code $($process.ExitCode)."
+    & powershell.exe @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Deploy failed with exit code $LASTEXITCODE."
     }
 }
 
