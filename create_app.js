@@ -54,7 +54,7 @@ const PROGRESS_STEP_ORDER = [
 ];
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
-const SUPPORTED_INPUT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv']);
+const SUPPORTED_INPUT_EXTENSIONS = new Set(['.xlsx', '.xls']);
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
     '# Example:',
@@ -190,7 +190,7 @@ function resolveInputExcelFile(inputFileArg) {
         if (!SUPPORTED_INPUT_EXTENSIONS.has(explicitExt)) {
             throw new Error(
                 `Unsupported file extension "${explicitExt}". ` +
-                'Only .xlsx/.xls/.csv are supported.'
+                'Only .xlsx/.xls are supported.'
             );
         }
         return explicitPath;
@@ -202,7 +202,7 @@ function resolveInputExcelFile(inputFileArg) {
 
     if (!dataFiles.length) {
         throw new Error(
-            'No input file found in project root. Put one .xlsx/.xls/.csv file here, ' +
+            'No input file found in project root. Put one .xlsx/.xls file here, ' +
             'or pass path: node create_app.js ./apps.xlsx'
         );
     }
@@ -250,16 +250,6 @@ function setCellText(sheet, rowIndex, colIndex, text) {
     sheet[address] = { t: 's', v: String(text || '') };
 }
 
-function isCsvInputFile(filePath) {
-    return path.extname(String(filePath || '')).toLowerCase() === '.csv';
-}
-
-function saveSheetAsCsv(filePath, sheet) {
-    const csvText = XLSX.utils.sheet_to_csv(sheet);
-    const csvWithBom = '\uFEFF' + csvText;
-    fs.writeFileSync(filePath, csvWithBom, 'utf8');
-}
-
 function createExcelStatusManager({
     filePath,
     workbook,
@@ -269,10 +259,6 @@ function createExcelStatusManager({
     progressColumnIndex
 }) {
     function saveWorkbook() {
-        if (isCsvInputFile(filePath)) {
-            saveSheetAsCsv(filePath, sheet);
-            return;
-        }
         XLSX.writeFile(workbook, filePath);
     }
 

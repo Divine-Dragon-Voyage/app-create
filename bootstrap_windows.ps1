@@ -668,7 +668,7 @@ function Main {
     Write-Host ""
     Write-Ok "Bootstrap completed."
     Write-Host "Run app creation with:"
-    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps.xlsx" -DeveloperUrl "https://play.google.com/console/u/0/developers/<id>/app-list"  (or use .\apps.csv)' -f $projectDir)
+    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps.xlsx" -DeveloperUrl "https://play.google.com/console/u/0/developers/<id>/app-list"' -f $projectDir)
 }
 
 Main
