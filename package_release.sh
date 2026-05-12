@@ -18,6 +18,7 @@ FILES=(
   "USER_WORKFLOW.md"
   "TECH_WORKFLOW.md"
   "用户使用文档.md"
+  "用户使用文档.txt"
   "开发者维护文档.md"
   "package.json"
   "package-lock.json"
