@@ -82,7 +82,7 @@ $form.MinimizeBox = $false
 $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 
 $labelIntro = New-Object System.Windows.Forms.Label
-$labelIntro.Text = "请填写开发者 ID（或链接），并选择本次运行要读取的 Excel 文件。"
+$labelIntro.Text = "请填写开发者 ID（或链接），并选择本次运行要读取的数据文件（Excel/CSV）。"
 $labelIntro.Location = New-Object System.Drawing.Point(24, 20)
 $labelIntro.Size = New-Object System.Drawing.Size(700, 22)
 $form.Controls.Add($labelIntro)
@@ -99,7 +99,7 @@ $txtDeveloper.Size = New-Object System.Drawing.Size(700, 24)
 $form.Controls.Add($txtDeveloper)
 
 $labelExcel = New-Object System.Windows.Forms.Label
-$labelExcel.Text = "Excel 文件路径"
+$labelExcel.Text = "数据文件路径（Excel/CSV）"
 $labelExcel.Location = New-Object System.Drawing.Point(24, 114)
 $labelExcel.Size = New-Object System.Drawing.Size(180, 20)
 $form.Controls.Add($labelExcel)
@@ -128,9 +128,9 @@ $btnCancel.Size = New-Object System.Drawing.Size(85, 30)
 $form.Controls.Add($btnCancel)
 
 $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-$openFileDialog.Filter = "Excel 文件 (*.xlsx;*.xls)|*.xlsx;*.xls|所有文件 (*.*)|*.*"
+$openFileDialog.Filter = "数据文件 (*.xlsx;*.xls;*.csv)|*.xlsx;*.xls;*.csv|所有文件 (*.*)|*.*"
 $openFileDialog.Multiselect = $false
-$openFileDialog.Title = "选择 Excel 文件"
+$openFileDialog.Title = "选择数据文件（Excel/CSV）"
 
 $selectedDeveloperUrl = $null
 $selectedExcelPath = $null
@@ -163,17 +163,17 @@ $btnStart.Add_Click({
         }
 
         if (-not $excelPathRaw) {
-            throw "请填写 Excel 文件路径。"
+            throw "请填写数据文件路径。"
         }
 
         if (-not (Test-Path $excelPathRaw -PathType Leaf)) {
-            throw "Excel 文件不存在，请检查路径。"
+            throw "数据文件不存在，请检查路径。"
         }
 
         $excelPath = (Resolve-Path $excelPathRaw -ErrorAction Stop).Path
         $ext = [IO.Path]::GetExtension($excelPath).ToLowerInvariant()
-        if (@(".xlsx", ".xls") -notcontains $ext) {
-            throw "Excel 文件必须是 .xlsx 或 .xls 格式。"
+        if (@(".xlsx", ".xls", ".csv") -notcontains $ext) {
+            throw "数据文件必须是 .xlsx / .xls / .csv 格式。"
         }
 
         $script:selectedDeveloperUrl = $devUrl

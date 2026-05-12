@@ -54,6 +54,7 @@ const PROGRESS_STEP_ORDER = [
 ];
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
+const SUPPORTED_INPUT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv']);
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
     '# Example:',
@@ -75,7 +76,7 @@ function parseCliArgs() {
     let inputFileArg;
 
     if (args.length > 1) {
-        throw new Error('Usage: node create_app.js [excel_file_path]');
+        throw new Error('Usage: node create_app.js [data_file_path]');
     }
 
     if (args.length === 1) {
@@ -183,22 +184,30 @@ function resolveInputExcelFile(inputFileArg) {
     if (inputFileArg) {
         const explicitPath = path.resolve(process.cwd(), inputFileArg);
         if (!fs.existsSync(explicitPath)) {
-            throw new Error(`Excel file not found: ${explicitPath}`);
+            throw new Error(`Input file not found: ${explicitPath}`);
+        }
+        const explicitExt = path.extname(explicitPath).toLowerCase();
+        if (!SUPPORTED_INPUT_EXTENSIONS.has(explicitExt)) {
+            throw new Error(
+                `Unsupported file extension "${explicitExt}". ` +
+                'Only .xlsx/.xls/.csv are supported.'
+            );
         }
         return explicitPath;
     }
 
-    const excelFiles = fs.readdirSync(process.cwd())
-        .filter(name => ['.xlsx', '.xls'].includes(path.extname(name).toLowerCase()))
+    const dataFiles = fs.readdirSync(process.cwd())
+        .filter(name => SUPPORTED_INPUT_EXTENSIONS.has(path.extname(name).toLowerCase()))
         .sort();
 
-    if (!excelFiles.length) {
+    if (!dataFiles.length) {
         throw new Error(
-            'No Excel file found in project root. Put one .xlsx/.xls file here, or pass path: node create_app.js ./apps.xlsx'
+            'No input file found in project root. Put one .xlsx/.xls/.csv file here, ' +
+            'or pass path: node create_app.js ./apps.xlsx'
         );
     }
 
-    return path.resolve(process.cwd(), excelFiles[0]);
+    return path.resolve(process.cwd(), dataFiles[0]);
 }
 
 function pickHeader(headers, candidates) {
@@ -334,13 +343,13 @@ function loadTasksFromExcel(filePath) {
     const workbook = XLSX.readFile(filePath);
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) {
-        throw new Error(`No sheet found in Excel file: ${filePath}`);
+        throw new Error(`No sheet found in input file: ${filePath}`);
     }
 
     const sheet = workbook.Sheets[firstSheetName];
     const ref = sheet['!ref'];
     if (!ref) {
-        throw new Error(`Excel sheet "${firstSheetName}" is empty.`);
+        throw new Error(`Sheet "${firstSheetName}" is empty.`);
     }
     const range = XLSX.utils.decode_range(ref);
     const headerRowIndex = range.s.r;
@@ -1235,7 +1244,7 @@ async function runOnce(task, appListUrl, statusManager) {
     const skippedDone = tasks.length - selectedTasks.length;
 
     console.log(`Developer console URL loaded from: ${configPath}`);
-    console.log(`Loaded ${tasks.length} rows from Excel: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
+    console.log(`Loaded ${tasks.length} rows from input file: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
     if (skippedDone > 0) {
         console.log(`[STATUS] Skipping ${skippedDone} row(s) already marked DONE.`);
     }
