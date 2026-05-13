@@ -21,13 +21,16 @@
    - 取消：退出，不启动
 4) 进入“应用创建启动器”窗口后，填写：
    - 开发者 ID 或链接
-   - Excel 文件路径（.xlsx/.xls）
+   - 数据文件路径（.xlsx/.xls/.csv）
 5) 点击“开始运行”。
 
 5. 数据文件基本要求
-数据文件支持 .xlsx/.xls，且至少要有两列（列名支持中英文）：
+数据文件支持 .xlsx/.xls/.csv，且至少要有两列（列名支持中英文）：
 - 应用名：应用名称 / 应用名 / App Name / Application Name
 - 包名：应用包名 / 包名 / App Package Name / Package Name / Application ID
+
+选择 .csv 时，脚本会在同目录自动生成工作文件：原文件名.__work.xlsx。
+断点续跑所需的 status/progress_step 都写入这个工作文件，原始 .csv 不会被修改。
 
 6. 注意事项
 1) 日常请只点桌面 App Create 快捷方式
@@ -35,6 +38,6 @@
 3) 同一批次跑完前，不要改动 Excel 列结构。
 
 7. 常见问题
-1) 提示数据文件不存在：重新选择正确的 .xlsx/.xls 文件。
+1) 提示数据文件不存在：重新选择正确的 .xlsx/.xls/.csv 文件。
 2) 提示开发者链接不合法：确认是 play.google.com 且包含 /developers/<id>。
 3) 页面布局偶尔异常（左侧栏缺失/空白）：通常是页面加载问题，重试一次即可。

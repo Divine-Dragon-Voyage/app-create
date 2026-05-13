@@ -54,7 +54,8 @@ const PROGRESS_STEP_ORDER = [
 ];
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
-const SUPPORTED_INPUT_EXTENSIONS = new Set(['.xlsx', '.xls']);
+const SUPPORTED_INPUT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv']);
+const CSV_WORKBOOK_SUFFIX = '.__work.xlsx';
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
     '# Example:',
@@ -190,7 +191,7 @@ function resolveInputExcelFile(inputFileArg) {
         if (!SUPPORTED_INPUT_EXTENSIONS.has(explicitExt)) {
             throw new Error(
                 `Unsupported file extension "${explicitExt}". ` +
-                'Only .xlsx/.xls are supported.'
+                'Only .xlsx/.xls/.csv are supported.'
             );
         }
         return explicitPath;
@@ -202,12 +203,63 @@ function resolveInputExcelFile(inputFileArg) {
 
     if (!dataFiles.length) {
         throw new Error(
-            'No input file found in project root. Put one .xlsx/.xls file here, ' +
+            'No input file found in project root. Put one .xlsx/.xls/.csv file here, ' +
             'or pass path: node create_app.js ./apps.xlsx'
         );
     }
 
     return path.resolve(process.cwd(), dataFiles[0]);
+}
+
+function getCsvWorkWorkbookPath(csvPath) {
+    const dir = path.dirname(csvPath);
+    const base = path.basename(csvPath, path.extname(csvPath));
+    return path.join(dir, `${base}${CSV_WORKBOOK_SUFFIX}`);
+}
+
+function createWorkbookFromCsv(csvPath, outputWorkbookPath) {
+    const workbook = XLSX.readFile(csvPath);
+    if (!workbook.SheetNames.length) {
+        throw new Error(`CSV file has no readable sheet: ${csvPath}`);
+    }
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!firstSheet || !firstSheet['!ref']) {
+        throw new Error(`CSV file is empty: ${csvPath}`);
+    }
+    XLSX.writeFile(workbook, outputWorkbookPath);
+}
+
+function resolveRuntimeWorkbook(inputFilePath) {
+    const ext = path.extname(inputFilePath).toLowerCase();
+    if (ext !== '.csv') {
+        return {
+            sourceFilePath: inputFilePath,
+            runtimeWorkbookPath: inputFilePath,
+            isCsvInput: false,
+            createdWorkWorkbook: false,
+            reusedWorkWorkbook: false
+        };
+    }
+
+    const workWorkbookPath = getCsvWorkWorkbookPath(inputFilePath);
+    if (fs.existsSync(workWorkbookPath)) {
+        return {
+            sourceFilePath: inputFilePath,
+            runtimeWorkbookPath: workWorkbookPath,
+            isCsvInput: true,
+            createdWorkWorkbook: false,
+            reusedWorkWorkbook: true
+        };
+    }
+
+    createWorkbookFromCsv(inputFilePath, workWorkbookPath);
+    return {
+        sourceFilePath: inputFilePath,
+        runtimeWorkbookPath: workWorkbookPath,
+        isCsvInput: true,
+        createdWorkWorkbook: true,
+        reusedWorkWorkbook: false
+    };
 }
 
 function pickHeader(headers, candidates) {
@@ -575,11 +627,7 @@ async function runOnce(task, appListUrl, statusManager) {
         browser = cdpConnection.browser;
         console.log(`Connected via CDP: ${cdpConnection.endpoint}`);
         const context = browser.contexts()[0];
-        page = context.pages().find(p => p.url().includes('play.google.com'));
-
-        if (!page) {
-            page = await context.newPage();
-        }
+        page = await context.newPage();
 
         await page.bringToFront();
         page.setDefaultTimeout(60000); // Set page-wide timeout to 60s.
@@ -596,12 +644,6 @@ async function runOnce(task, appListUrl, statusManager) {
 
         const openAppListPage = async () => {
             const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
-
-            // Reuse existing session/page when already on app list.
-            if (await createBtn.isVisible().catch(() => false)) {
-                console.log('App list already open, reusing current session.');
-                return;
-            }
 
             const ensureDeveloperSelectedIfNeeded = async () => {
                 const devItem = page.locator('developer-item, [debug-id="all-developers"]').first();
@@ -676,103 +718,133 @@ async function runOnce(task, appListUrl, statusManager) {
             statusManager.updateTaskStatus(task, STATUS_PARTIAL);
         } else {
             console.log('Clicking "Create app" button on list page...');
-        const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
-        await retryAction(async () => {
-            await createBtn.click({ timeout: 10000 });
-        }, 'Click Create App button');
-        await delay(page, 10000);
+            const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
+            const appNameInput = page.locator(
+                '[debug-id="app-name-input"] input, input[aria-label="App name"]'
+            ).first();
+            const packageNameInput = page.locator(
+                '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
+            ).first();
 
-        // Fill app name and package name.
-        console.log('Filling App name...');
-        const appNameInput = page.locator(
-            '[debug-id="app-name-input"] input, input[aria-label="App name"]'
-        ).first();
-        await retryAction(async () => {
-            await appNameInput.waitFor({ state: 'visible', timeout: 15000 });
-            await appNameInput.fill(appName);
-        }, 'Fill App name');
-        await delay(page, 1500);
+            await retryAction(async () => {
+                await createBtn.waitFor({ state: 'visible', timeout: 20000 });
+                await createBtn.click({ timeout: 10000 });
+            }, 'Click Create App button');
 
-        console.log('Filling App package name...');
-        const packageNameInput = page.locator(
-            '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
-        ).first();
-        await retryAction(async () => {
-            await packageNameInput.waitFor({ state: 'visible', timeout: 15000 });
-            await packageNameInput.fill(packageName);
-        }, 'Fill App package name');
-        await delay(page, 1500);
+            await retryAction(async () => {
+                await appNameInput.waitFor({ state: 'visible', timeout: 30000 });
+            }, 'Wait create app form');
+            await delay(page, 1500);
 
-        const checkPackageBtn = page.locator('[debug-id="check-package-name-availability-button"]').first();
-        if (await checkPackageBtn.isVisible().catch(() => false)) {
-            console.log('Checking package name availability...');
-            const enabled = await waitForEnabled(checkPackageBtn, 15000);
-            if (enabled) {
-                await retryAction(async () => {
-                    await checkPackageBtn.click({ timeout: 10000 });
-                }, 'Click Check availability');
-                await delay(page, 5000);
+            // Fill app name and package name.
+            console.log('Filling App name...');
+            await retryAction(async () => {
+                await appNameInput.fill(appName);
+            }, 'Fill App name');
+            await delay(page, 1500);
+
+            console.log('Filling App package name...');
+            await retryAction(async () => {
+                await packageNameInput.waitFor({ state: 'visible', timeout: 15000 });
+                await packageNameInput.fill(packageName);
+            }, 'Fill App package name');
+            await delay(page, 1500);
+
+            const checkPackageBtn = page.locator('[debug-id="check-package-name-availability-button"]').first();
+            if (await checkPackageBtn.isVisible().catch(() => false)) {
+                console.log('Checking package name availability...');
+                const enabled = await waitForEnabled(checkPackageBtn, 15000);
+                if (enabled) {
+                    await retryAction(async () => {
+                        await checkPackageBtn.click({ timeout: 10000 });
+                    }, 'Click Check availability');
+                    await delay(page, 5000);
+                } else {
+                    console.log('Warning: "Check availability" button did not become enabled in time.');
+                }
             } else {
-                console.log('Warning: "Check availability" button did not become enabled in time.');
+                console.log('Warning: Check availability button not found, continuing...');
             }
-        } else {
-            console.log('Warning: Check availability button not found, continuing...');
-        }
 
-        // Randomly choose App or Game.
-        const isApp = Math.random() < 0.5;
-        const typeLabel = isApp ? 'App' : 'Game';
-        const typeId = isApp ? 'app-radio' : 'game-radio';
-        console.log(`Selecting type: ${typeLabel}`);
-        await retryAction(async () => {
-            await page.locator(`[debug-id="${typeId}"]`).first().click({ timeout: 5000 });
-        }, `Select type: ${typeLabel}`);
-        await delay(page, 2000);
+            // Randomly choose App or Game.
+            const isApp = Math.random() < 0.5;
+            const typeLabel = isApp ? 'App' : 'Game';
+            const typeId = isApp ? 'app-radio' : 'game-radio';
+            console.log(`Selecting type: ${typeLabel}`);
+            await retryAction(async () => {
+                await page.locator(`[debug-id="${typeId}"]`).first().click({ timeout: 5000 });
+            }, `Select type: ${typeLabel}`);
+            await delay(page, 2000);
 
-        // Select Free.
-        console.log('Selecting mode: Free');
-        await retryAction(async () => {
-            await page.getByText('Free', { exact: true }).first().click({ timeout: 5000 });
-        }, 'Select Free mode');
-        await delay(page, 2000);
+            // Select Free.
+            console.log('Selecting mode: Free');
+            await retryAction(async () => {
+                await page.getByText('Free', { exact: true }).first().click({ timeout: 5000 });
+            }, 'Select Free mode');
+            await delay(page, 2000);
 
-        // Tick required declarations.
-        console.log('Checking policy declarations...');
-        const declarationCheckboxes = [
-            '[debug-id="guidelines-checkbox"]',
-            '[debug-id="export-laws-checkbox"]'
-        ];
-        for (const sel of declarationCheckboxes) {
-            const checkbox = page.locator(sel);
-            if (await checkbox.isVisible().catch(() => false)) {
-                const input = checkbox.locator('input[type="checkbox"]');
-                if (!(await input.isChecked().catch(() => false))) {
-                    await checkbox.click().catch(() => { });
+            // Tick required declarations.
+            console.log('Checking policy declarations...');
+            const declarationCheckboxes = [
+                '[debug-id="guidelines-checkbox"]',
+                '[debug-id="export-laws-checkbox"]'
+            ];
+            for (const sel of declarationCheckboxes) {
+                const checkbox = page.locator(sel);
+                if (await checkbox.isVisible().catch(() => false)) {
+                    const input = checkbox.locator('input[type="checkbox"]');
+                    if (!(await input.isChecked().catch(() => false))) {
+                        await checkbox.click().catch(() => { });
+                        await delay(page, 1000);
+                    }
+                }
+            }
+
+            const otherBoxes = await page.locator('input[type="checkbox"]').all();
+            for (const b of otherBoxes) {
+                if (!(await b.isChecked().catch(() => false))) {
+                    await b.check().catch(() => b.click().catch(() => { }));
                     await delay(page, 1000);
                 }
             }
-        }
 
-        const otherBoxes = await page.locator('input[type="checkbox"]').all();
-        for (const b of otherBoxes) {
-            if (!(await b.isChecked().catch(() => false))) {
-                await b.check().catch(() => b.click().catch(() => { }));
-                await delay(page, 1000);
+            await delay(page);
+
+            // Click Create.
+            console.log('Clicking "Create" submit button...');
+            const submitBtn = page.locator('material-button[debug-id="create-app-button"] button').first();
+            await retryAction(async () => {
+                await submitBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
+                await submitBtn.click({ timeout: 10000 });
+            }, 'Final Create button');
+
+            try {
+                await page.waitForFunction(
+                    () => /\/app\/\d+/.test(window.location.href),
+                    null,
+                    { timeout: 120000 }
+                );
+            } catch (waitError) {
+                const currentUrl = page.url();
+                const visibleErrors = await page.locator(
+                    '[role="alert"], .error, .errors, .warning, .mdc-snackbar, text=/error|invalid|already|unable|failed/i'
+                ).allInnerTexts().catch(() => []);
+                const compactErrors = visibleErrors
+                    .map(text => String(text || '').trim())
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(' | ');
+                throw new Error(
+                    'Create app did not finish in time. ' +
+                    `Current URL: ${currentUrl}. ` +
+                    `Visible errors: ${compactErrors || 'none'}. ` +
+                    `Original wait error: ${waitError.message}`
+                );
             }
-        }
 
-        await delay(page);
-
-        // Click Create.
-        console.log('Clicking "Create" submit button...');
-        const submitBtn = page.locator('material-button[debug-id="create-app-button"] button').first();
-        await retryAction(async () => {
-            await submitBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
-            await submitBtn.click({ timeout: 10000 });
-        }, 'Final Create button');
-        await page.waitForURL(/app-dashboard|app\/setup|apps\/publish/, { timeout: 90000 });
-        console.log('App created successfully, navigating to dashboard...');
-        await delay(page, 8000);
+            await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => { });
+            console.log('App created successfully, navigating to dashboard...');
+            await delay(page, 8000);
 
             // Extract app base path.
             appBasePath = extractAppBasePathFromCurrentUrl();
@@ -1210,13 +1282,14 @@ async function runOnce(task, appListUrl, statusManager) {
             console.log(`[RESUME] Skip countries/regions publish step (already >= ${task.progressStep}).`);
         }
 
-        await page.click('text=All apps').catch(() => { });
-
         statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
         statusManager.updateTaskStatus(task, STATUS_DONE);
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
         console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
+        if (page && !page.isClosed()) {
+            await page.close().catch(() => { });
+        }
         await browser.close();
     } catch (err) {
         const currentUrl = (page && typeof page.url === 'function') ? page.url() : '';
@@ -1230,6 +1303,9 @@ async function runOnce(task, appListUrl, statusManager) {
         }
 
         console.error(`[FATAL ERROR] In iteration: ${err.message}`);
+        if (page && !page.isClosed()) {
+            await page.close().catch(() => { });
+        }
         if (browser) await browser.close().catch(() => { });
         throw err;
     }
@@ -1239,12 +1315,22 @@ async function runOnce(task, appListUrl, statusManager) {
     const { inputFileArg } = parseCliArgs();
     const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
     const inputFilePath = resolveInputExcelFile(inputFileArg);
-    const { tasks, sheetName, statusManager } = loadTasksFromExcel(inputFilePath);
+    const runtimeInput = resolveRuntimeWorkbook(inputFilePath);
+    const { tasks, sheetName, statusManager } = loadTasksFromExcel(runtimeInput.runtimeWorkbookPath);
     const selectedTasks = tasks.filter(task => task.status !== STATUS_DONE);
     const skippedDone = tasks.length - selectedTasks.length;
 
     console.log(`Developer console URL loaded from: ${configPath}`);
     console.log(`Loaded ${tasks.length} rows from input file: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
+    if (runtimeInput.isCsvInput) {
+        console.log(`[CSV] Source file: ${runtimeInput.sourceFilePath}`);
+        console.log(`[CSV] Working workbook: ${runtimeInput.runtimeWorkbookPath}`);
+        if (runtimeInput.createdWorkWorkbook) {
+            console.log('[CSV] Created new working workbook from CSV. Status/progress will be saved in this workbook.');
+        } else if (runtimeInput.reusedWorkWorkbook) {
+            console.log('[CSV] Reusing existing working workbook. Resume state is read from this workbook.');
+        }
+    }
     if (skippedDone > 0) {
         console.log(`[STATUS] Skipping ${skippedDone} row(s) already marked DONE.`);
     }

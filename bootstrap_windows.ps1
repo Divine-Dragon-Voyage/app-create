@@ -35,6 +35,24 @@ function Write-WarnLog {
     Write-Host "[WARN] $Message" -ForegroundColor Yellow
 }
 
+function Hold-WindowOnError {
+    param([string]$HintMessage = "Task failed. Please check the error output above.")
+
+    if (-not [Environment]::UserInteractive) {
+        return
+    }
+
+    Write-Host ""
+    Write-WarnLog $HintMessage
+    Write-Host "Press any key to close..."
+    try {
+        [void][System.Console]::ReadKey($true)
+    } catch {
+        # Fallback for environments where ReadKey is unavailable.
+        Start-Sleep -Seconds 10
+    }
+}
+
 function Ensure-Directory {
     param([Parameter(Mandatory = $true)][string]$PathValue)
     if (-not (Test-Path $PathValue)) {
@@ -661,14 +679,19 @@ function Main {
     Save-RuntimeResolution -ProjectDir $projectDir
 
     if ($RunApp) {
-        Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile -DeveloperConsoleUrl $DeveloperUrl
-        return
+        try {
+            Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile -DeveloperConsoleUrl $DeveloperUrl
+            return
+        } catch {
+            Hold-WindowOnError -HintMessage "App run failed."
+            throw
+        }
     }
 
     Write-Host ""
     Write-Ok "Bootstrap completed."
     Write-Host "Run app creation with:"
-    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps.xlsx" -DeveloperUrl "https://play.google.com/console/u/0/developers/<id>/app-list"' -f $projectDir)
+    Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "{0}\bootstrap_windows.ps1" -RunApp -ExcelFile ".\apps.xlsx" -DeveloperUrl "https://play.google.com/console/u/0/developers/<id>/app-list"  (or use .\apps.csv)' -f $projectDir)
 }
 
 Main
