@@ -587,6 +587,32 @@ async function connectBrowserOverCdp() {
     );
 }
 
+async function ensureBrowserWindowMaximized(page) {
+    try {
+        const cdpSession = await page.context().newCDPSession(page);
+        const { windowId } = await cdpSession.send('Browser.getWindowForTarget');
+        if (windowId === undefined || windowId === null) {
+            console.log('Warning: Could not resolve browser window id for maximize check.');
+            return;
+        }
+
+        const boundsResult = await cdpSession.send('Browser.getWindowBounds', { windowId });
+        const currentState = boundsResult && boundsResult.bounds ? boundsResult.bounds.windowState : '';
+        if (currentState === 'maximized' || currentState === 'fullscreen') {
+            return;
+        }
+
+        await cdpSession.send('Browser.setWindowBounds', {
+            windowId,
+            bounds: { windowState: 'maximized' }
+        });
+        await page.waitForTimeout(500);
+        console.log('Browser window was not maximized; switched to maximized state.');
+    } catch (err) {
+        console.log(`Warning: Failed to enforce maximized browser window: ${err.message}`);
+    }
+}
+
 async function retryAction(action, label = 'action', retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
@@ -630,6 +656,7 @@ async function runOnce(task, appListUrl, statusManager) {
         page = await context.newPage();
 
         await page.bringToFront();
+        await ensureBrowserWindowMaximized(page);
         page.setDefaultTimeout(60000); // Set page-wide timeout to 60s.
 
         let appBasePath = '';

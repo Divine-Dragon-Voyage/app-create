@@ -554,6 +554,7 @@ function Launch-BrowserWithCdp {
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=$CdpPort",
         "--user-data-dir=`"$BrowserUserDataDir`"",
+        "--start-maximized",
         "--no-first-run",
         "--no-default-browser-check"
     )
