@@ -870,8 +870,8 @@ async function runOnce(task, appListUrl, statusManager) {
             }
         };
 
-        const openExistingAppForPartial = async () => {
-            console.log(`[RESUME] status=PARTIAL, locating existing app: ${appName} / ${packageName}`);
+        const tryOpenExistingAppByPackage = async () => {
+            console.log(`[RESUME] Trying to locate existing app by package: ${packageName}`);
             const searchInput = page.locator(
                 'input[placeholder*="Search by app or package"], input[aria-label*="Search by app or package"], input[type="search"]'
             ).first();
@@ -881,26 +881,30 @@ async function runOnce(task, appListUrl, statusManager) {
             }
 
             const appTextContainer = page.locator('div.text-container')
-                .filter({ hasText: appName })
                 .filter({ hasText: packageName })
                 .first();
 
-            await retryAction(async () => {
-                await appTextContainer.waitFor({ state: 'visible', timeout: 20000 });
-            }, 'Find PARTIAL app row', 2);
+            const rowFound = await appTextContainer.waitFor({ state: 'visible', timeout: 12000 })
+                .then(() => true)
+                .catch(() => false);
+            if (!rowFound) {
+                console.log('[RESUME] Existing app row not found on list.');
+                return false;
+            }
 
-            let viewAppBtn = appTextContainer.locator(
-                'xpath=ancestor::tr[1]//*[self::a or self::button or @role="button"][contains(normalize-space(.), "View app")]'
+            const viewAppBtn = appTextContainer.locator(
+                'xpath=ancestor::tr[1]//*[self::a[contains(@href,"/app/")] or self::a[contains(normalize-space(.), "View app")] or self::button[contains(normalize-space(.), "View app")] or @role="button"]'
             ).first();
 
             if (!(await viewAppBtn.isVisible().catch(() => false))) {
-                viewAppBtn = page.locator('a:has-text("View app"), button:has-text("View app"), [role="button"]:has-text("View app")').first();
+                console.log('[RESUME] Existing app row found but View app button is not visible.');
+                return false;
             }
 
             await retryAction(async () => {
                 await viewAppBtn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
                 await viewAppBtn.click({ timeout: 10000 });
-            }, 'Click View app for PARTIAL row', 2);
+            }, 'Click View app in matched row', 2);
 
             try {
                 await page.waitForURL(/\/app\/\d+/, { timeout: 60000 });
@@ -909,13 +913,14 @@ async function runOnce(task, appListUrl, statusManager) {
             }
             await delay(page, 4000);
             appBasePath = extractAppBasePathFromCurrentUrl();
-            console.log('[RESUME] App path:', appBasePath);
+            console.log('[RESUME] Existing app opened:', appBasePath);
+            return true;
         };
 
         await openAppListPage();
 
-        if (task.status === STATUS_PARTIAL) {
-            await openExistingAppForPartial();
+        const existingOpened = await tryOpenExistingAppByPackage();
+        if (existingOpened) {
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
             statusManager.updateTaskStatus(task, STATUS_PARTIAL);
         } else {
@@ -1293,8 +1298,7 @@ async function runOnce(task, appListUrl, statusManager) {
             }
         }
 
-        // --- Execute declarations flow with fine-grained checkpoint resume ---
-        const shouldRunStep = (doneStep) => progressRank(task.progressStep) < progressRank(doneStep);
+        // --- Execute declarations flow by current UI state only ---
         const markStepDone = (doneStep) => {
             statusManager.updateTaskProgress(task, doneStep);
             statusManager.updateTaskStatus(task, STATUS_PARTIAL);
@@ -1310,156 +1314,125 @@ async function runOnce(task, appListUrl, statusManager) {
             return state;
         };
 
-        await syncProgressStepFromUiIfPossible();
-
-        if (shouldRunStep(PROGRESS_STEP_ADS_DONE)) {
-            await goToAppContent();
-            const adsState = await ensureKnownDeclarationState('Ads');
-            if (adsState === 'pending') {
-                console.log('Executing declaration 1/7: Ads...');
-                await clickStartDeclaration('Ads');
-                await selectRadio(/^No/);
-                await clickMainButton('Save');
-                await waitSaved(page);
-            } else {
-                console.log('[RESUME] Ads already done on UI, skip filling.');
-            }
-            markStepDone(PROGRESS_STEP_ADS_DONE);
+        await goToAppContent();
+        const adsState = await ensureKnownDeclarationState('Ads');
+        if (adsState === 'pending') {
+            console.log('Executing declaration 1/7: Ads...');
+            await clickStartDeclaration('Ads');
+            await selectRadio(/^No/);
+            await clickMainButton('Save');
+            await waitSaved(page);
         } else {
-            console.log(`[RESUME] Skip Ads (already >= ${task.progressStep}).`);
+            console.log('[RESUME] Ads already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_ADS_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_APP_ACCESS_DONE)) {
-            await goToAppContent();
-            const appAccessState = await ensureKnownDeclarationState('App access');
-            if (appAccessState === 'pending') {
-                console.log('Executing declaration 2/7: App access...');
-                await clickStartDeclaration('App access');
-                await selectRadio('All functionality in my app is available without any access restrictions');
-                await clickMainButton('Save');
-                await waitSaved(page);
-            } else {
-                console.log('[RESUME] App access already done on UI, skip filling.');
-            }
-            markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
+        await goToAppContent();
+        const appAccessState = await ensureKnownDeclarationState('App access');
+        if (appAccessState === 'pending') {
+            console.log('Executing declaration 2/7: App access...');
+            await clickStartDeclaration('App access');
+            await selectRadio('All functionality in my app is available without any access restrictions');
+            await clickMainButton('Save');
+            await waitSaved(page);
         } else {
-            console.log(`[RESUME] Skip App access (already >= ${task.progressStep}).`);
+            console.log('[RESUME] App access already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_AUDIENCE_DONE)) {
-            await goToAppContent();
-            const audienceState = await ensureKnownDeclarationState('Target audience and content');
-            if (audienceState === 'pending') {
-                console.log('Executing declaration 3/7: Target audience and content...');
-                await clickStartDeclaration('Target audience and content');
-                await selectCheckbox('13-15');
-                await selectCheckbox('16-17');
-                await selectCheckbox('18 and over');
-                await clickMainButton('Next');
+        await goToAppContent();
+        const audienceState = await ensureKnownDeclarationState('Target audience and content');
+        if (audienceState === 'pending') {
+            console.log('Executing declaration 3/7: Target audience and content...');
+            await clickStartDeclaration('Target audience and content');
+            await selectCheckbox('13-15');
+            await selectCheckbox('16-17');
+            await selectCheckbox('18 and over');
+            await clickMainButton('Next');
 
-                let stepsLeft = 5;
-                while (stepsLeft-- > 0) {
-                    const appealText = "Could your store listing unintentionally appeal to children?";
-                    if (await page.locator(`text=${appealText}`).first().isVisible().catch(() => false)) {
-                        console.log('Handling child appeal question...');
-                        await selectRadio(/^No/);
-                    }
-                    const isSaveVisible = await page.locator('button:has-text("Save"), [debug-id="main-button"]:has-text("Save")').first().isVisible().catch(() => false);
-                    if (isSaveVisible) {
-                        await clickMainButton('Save');
-                        break;
-                    }
-                    const isNextVisible = await page.locator('button:has-text("Next"), [debug-id="main-button"]:has-text("Next")').first().isVisible().catch(() => false);
-                    if (isNextVisible) {
-                        await clickMainButton('Next');
-                    } else {
-                        console.log('Warning: Target Audience path reached end or got stuck.');
-                        break;
-                    }
+            let stepsLeft = 5;
+            while (stepsLeft-- > 0) {
+                const appealText = "Could your store listing unintentionally appeal to children?";
+                if (await page.locator(`text=${appealText}`).first().isVisible().catch(() => false)) {
+                    console.log('Handling child appeal question...');
+                    await selectRadio(/^No/);
                 }
-                await waitSaved(page);
-            } else {
-                console.log('[RESUME] Target audience and content already done on UI, skip filling.');
+                const isSaveVisible = await page.locator('button:has-text("Save"), [debug-id="main-button"]:has-text("Save")').first().isVisible().catch(() => false);
+                if (isSaveVisible) {
+                    await clickMainButton('Save');
+                    break;
+                }
+                const isNextVisible = await page.locator('button:has-text("Next"), [debug-id="main-button"]:has-text("Next")').first().isVisible().catch(() => false);
+                if (isNextVisible) {
+                    await clickMainButton('Next');
+                } else {
+                    console.log('Warning: Target Audience path reached end or got stuck.');
+                    break;
+                }
             }
-            markStepDone(PROGRESS_STEP_AUDIENCE_DONE);
+            await waitSaved(page);
         } else {
-            console.log(`[RESUME] Skip Target audience and content (already >= ${task.progressStep}).`);
+            console.log('[RESUME] Target audience and content already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_AUDIENCE_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_AD_ID_DONE)) {
-            await goToAppContent();
-            const adIdState = await ensureKnownDeclarationState('Advertising ID');
-            if (adIdState === 'pending') {
-                console.log('Executing declaration 4/7: Advertising ID...');
-                await clickStartDeclaration('Advertising ID');
-                await selectRadio(/^Yes/);
-                await selectCheckbox('Developer communications');
-                await clickMainButton('Save');
-                await waitSaved(page);
-                await page.evaluate(() => window.scrollTo(0, 0));
-                await delay(page, 2000);
-            } else {
-                console.log('[RESUME] Advertising ID already done on UI, skip filling.');
-            }
-            markStepDone(PROGRESS_STEP_AD_ID_DONE);
+        await goToAppContent();
+        const adIdState = await ensureKnownDeclarationState('Advertising ID');
+        if (adIdState === 'pending') {
+            console.log('Executing declaration 4/7: Advertising ID...');
+            await clickStartDeclaration('Advertising ID');
+            await selectRadio(/^Yes/);
+            await selectCheckbox('Developer communications');
+            await clickMainButton('Save');
+            await waitSaved(page);
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await delay(page, 2000);
         } else {
-            console.log(`[RESUME] Skip Advertising ID (already >= ${task.progressStep}).`);
+            console.log('[RESUME] Advertising ID already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_AD_ID_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_GOV_DONE)) {
-            await goToAppContent();
-            const govState = await ensureKnownDeclarationState('Government apps');
-            if (govState === 'pending') {
-                console.log('Executing declaration 5/7: Government apps...');
-                await clickStartDeclaration('Government apps');
-                await selectRadio(/^No/);
-                await clickMainButton('Save');
-                await waitSaved(page);
-            } else {
-                console.log('[RESUME] Government apps already done on UI, skip filling.');
-            }
-            markStepDone(PROGRESS_STEP_GOV_DONE);
+        await goToAppContent();
+        const govState = await ensureKnownDeclarationState('Government apps');
+        if (govState === 'pending') {
+            console.log('Executing declaration 5/7: Government apps...');
+            await clickStartDeclaration('Government apps');
+            await selectRadio(/^No/);
+            await clickMainButton('Save');
+            await waitSaved(page);
         } else {
-            console.log(`[RESUME] Skip Government apps (already >= ${task.progressStep}).`);
+            console.log('[RESUME] Government apps already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_GOV_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_FINANCE_DONE)) {
-            await goToAppContent();
-            const financeState = await ensureKnownDeclarationState('Financial features');
-            if (financeState === 'pending') {
-                console.log('Executing declaration 6/7: Financial features...');
-                await clickStartDeclaration('Financial features');
-                await selectCheckbox("My app doesn't provide any financial features");
-                await clickMainButton('Next');
-                await clickMainButton('Save');
-                await waitSaved(page);
-            } else {
-                console.log('[RESUME] Financial features already done on UI, skip filling.');
-            }
-            markStepDone(PROGRESS_STEP_FINANCE_DONE);
+        await goToAppContent();
+        const financeState = await ensureKnownDeclarationState('Financial features');
+        if (financeState === 'pending') {
+            console.log('Executing declaration 6/7: Financial features...');
+            await clickStartDeclaration('Financial features');
+            await selectCheckbox("My app doesn't provide any financial features");
+            await clickMainButton('Next');
+            await clickMainButton('Save');
+            await waitSaved(page);
         } else {
-            console.log(`[RESUME] Skip Financial features (already >= ${task.progressStep}).`);
+            console.log('[RESUME] Financial features already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_FINANCE_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_HEALTH_DONE)) {
-            await goToAppContent();
-            const healthState = await ensureKnownDeclarationState('Health apps');
-            if (healthState === 'pending') {
-                console.log('Executing declaration 7/7: Health apps...');
-                await clickStartDeclaration('Health apps');
-                await selectCheckbox('My app does not have any health features');
-                await clickMainButton('Next');
-                await clickMainButton('Save');
-                await waitSaved(page);
-            } else {
-                console.log('[RESUME] Health apps already done on UI, skip filling.');
-            }
-            markStepDone(PROGRESS_STEP_HEALTH_DONE);
+        await goToAppContent();
+        const healthState = await ensureKnownDeclarationState('Health apps');
+        if (healthState === 'pending') {
+            console.log('Executing declaration 7/7: Health apps...');
+            await clickStartDeclaration('Health apps');
+            await selectCheckbox('My app does not have any health features');
+            await clickMainButton('Next');
+            await clickMainButton('Save');
+            await waitSaved(page);
         } else {
-            console.log(`[RESUME] Skip Health apps (already >= ${task.progressStep}).`);
+            console.log('[RESUME] Health apps already done on UI, skip filling.');
         }
+        markStepDone(PROGRESS_STEP_HEALTH_DONE);
 
-        if (shouldRunStep(PROGRESS_STEP_COUNTRY_DONE)) {
             // 8. Test and release
             console.log('Navigating to "Test and release"...');
             const testAndReleaseLink = page.locator(
@@ -1582,9 +1555,6 @@ async function runOnce(task, appListUrl, statusManager) {
             await delay(page, 3000);
 
             markStepDone(PROGRESS_STEP_COUNTRY_DONE);
-        } else {
-            console.log(`[RESUME] Skip countries/regions publish step (already >= ${task.progressStep}).`);
-        }
 
         statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
         statusManager.updateTaskStatus(task, STATUS_DONE);
