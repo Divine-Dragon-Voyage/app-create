@@ -1343,62 +1343,93 @@ async function runOnce(task, appListUrl, statusManager) {
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_HEALTH_DONE);
 
-            // 8. Test and release
-            console.log('Navigating to "Test and release"...');
+            // 8-11. Release navigation (strict: must really enter target pages before continuing)
+            const testAndReleaseUrl = `${appBasePath}/test-and-release`;
+            const productionUrl = `${appBasePath}/tracks/production`;
+            const productionCountryAvailabilityUrl = `${productionUrl}?tab=countryAvailability`;
             const testAndReleaseLink = page.locator(
                 'a[href*="/test-and-release"], a.item-link:has(.item-label:has-text("Test and release"))'
             ).first();
-            await retryAction(async () => {
-                await testAndReleaseLink.waitFor({ state: 'visible', timeout: 20000 });
-                await testAndReleaseLink.scrollIntoViewIfNeeded({ timeout: 5000 });
-                await testAndReleaseLink.click({ timeout: 10000 });
-            }, 'Click Test and release');
-            try {
-                await page.waitForURL(/\/test-and-release(?:\/|$)/, { timeout: 60000 });
-            } catch (_) {
-                console.log('Warning: URL did not switch to /test-and-release in time, continuing...');
-            }
-            await delay(page, 5000);
-
-            // 9. Production
-            console.log('Navigating to "Production"...');
             const productionLink = page.locator(
                 'a[href*="/tracks/production"], a.item-link:has(.item-label:has-text("Production"))'
             ).first();
-            await retryAction(async () => {
-                await productionLink.waitFor({ state: 'visible', timeout: 20000 });
-                await productionLink.scrollIntoViewIfNeeded({ timeout: 5000 });
-                await productionLink.click({ timeout: 10000 });
-            }, 'Click Production');
-            try {
-                await page.waitForURL(/\/tracks\/production(?:\/|$)/, { timeout: 60000 });
-            } catch (_) {
-                console.log('Warning: URL did not switch to /tracks/production in time, continuing...');
-            }
-            await delay(page, 5000);
-
-            // 10. Countries / regions tab
-            console.log('Opening "Countries / regions" tab...');
             const countriesRegionsTab = page.locator(
                 '[role="tab"]:has-text("Countries / regions"), a:has-text("Countries / regions"), button:has-text("Countries / regions")'
             ).first();
-            await retryAction(async () => {
-                await countriesRegionsTab.waitFor({ state: 'visible', timeout: 20000 });
-                await countriesRegionsTab.scrollIntoViewIfNeeded({ timeout: 5000 });
-                await countriesRegionsTab.click({ timeout: 10000 });
-            }, 'Click Countries / regions tab');
-            await delay(page, 3000);
-
-            // 11. Add countries / regions
-            console.log('Clicking "Add countries / regions"...');
             const addCountriesBtn = page.locator(
                 'button:has-text("Add countries / regions"), [role="button"]:has-text("Add countries / regions"), a:has-text("Add countries / regions"), .mdc-button:has-text("Add countries / regions")'
             ).first();
+
+            // 8. Test and release
+            console.log('Navigating to "Test and release"...');
             await retryAction(async () => {
-                await addCountriesBtn.waitFor({ state: 'visible', timeout: 20000 });
+                const linkVisible = await testAndReleaseLink.isVisible().catch(() => false);
+                if (linkVisible) {
+                    await testAndReleaseLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await testAndReleaseLink.click({ timeout: 10000 });
+                } else {
+                    console.log('[RELEASE] Test and release link not visible, using direct URL fallback.');
+                    await page.goto(testAndReleaseUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+                }
+
+                await page.waitForURL(/\/test-and-release(?:\/|$)/, { timeout: 120000 });
+                await productionLink.waitFor({ state: 'visible', timeout: 60000 });
+            }, 'Open Test and release', 3);
+            await delay(page, 3000);
+
+            // 9. Production
+            console.log('Navigating to "Production"...');
+            await retryAction(async () => {
+                const linkVisible = await productionLink.isVisible().catch(() => false);
+                if (linkVisible) {
+                    await productionLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await productionLink.click({ timeout: 10000 });
+                } else {
+                    console.log('[RELEASE] Production link not visible, using direct URL fallback.');
+                    await page.goto(productionUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+                }
+
+                await page.waitForURL(/\/tracks\/production(?:\/|$)/, { timeout: 120000 });
+                const countriesTabVisible = await countriesRegionsTab.isVisible().catch(() => false);
+                const addButtonVisible = await addCountriesBtn.isVisible().catch(() => false);
+                if (!countriesTabVisible && !addButtonVisible) {
+                    throw new Error('Production page loaded but Countries/regions controls are not ready yet.');
+                }
+            }, 'Open Production', 3);
+            await delay(page, 3000);
+
+            // 10. Countries / regions tab (with direct URL fallback)
+            console.log('Opening "Countries / regions" tab...');
+            await retryAction(async () => {
+                if (await addCountriesBtn.isVisible().catch(() => false)) {
+                    return;
+                }
+
+                const tabVisible = await countriesRegionsTab.isVisible().catch(() => false);
+                if (tabVisible) {
+                    await countriesRegionsTab.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await countriesRegionsTab.click({ timeout: 10000 });
+                    await delay(page, 2000);
+                }
+
+                if (await addCountriesBtn.isVisible().catch(() => false)) {
+                    return;
+                }
+
+                console.log('[RELEASE] Countries / regions tab not ready, using direct URL fallback...');
+                await page.goto(productionCountryAvailabilityUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+                await delay(page, 2500);
+                await addCountriesBtn.waitFor({ state: 'visible', timeout: 60000 });
+            }, 'Open Countries / regions tab', 3);
+            await delay(page, 2000);
+
+            // 11. Add countries / regions
+            console.log('Clicking "Add countries / regions"...');
+            await retryAction(async () => {
+                await addCountriesBtn.waitFor({ state: 'visible', timeout: 60000 });
                 await addCountriesBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
                 await addCountriesBtn.click({ timeout: 10000 });
-            }, 'Click Add countries / regions');
+            }, 'Click Add countries / regions', 3);
             await delay(page, 3000);
 
             // 12. Select all countries/regions (prefer direct "Select all rows" checkbox)
