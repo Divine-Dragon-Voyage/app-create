@@ -200,6 +200,7 @@ $args = @(
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$bootstrapPath`"",
     "-RunApp",
+    "-HoldWindowOnSuccess",
     "-ExcelFile", "`"$selectedExcelPath`"",
     "-DeveloperUrl", "`"$selectedDeveloperUrl`""
 )

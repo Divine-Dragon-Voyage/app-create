@@ -226,20 +226,10 @@ function buildCsvStateFilePath(csvPath) {
 
 function resolveRuntimeInput(inputFilePath) {
     const ext = path.extname(inputFilePath).toLowerCase();
-    if (ext !== '.csv') {
-        return {
-            sourceFilePath: inputFilePath,
-            runtimeWorkbookPath: inputFilePath,
-            isCsvInput: false,
-            stateFilePath: ''
-        };
-    }
-
     return {
         sourceFilePath: inputFilePath,
         runtimeWorkbookPath: inputFilePath,
-        isCsvInput: true,
-        stateFilePath: buildCsvStateFilePath(inputFilePath)
+        isCsvInput: ext === '.csv'
     };
 }
 
@@ -547,12 +537,35 @@ function createCsvStatusManager({
     };
 }
 
-function loadTasksFromExcel(filePath, options = {}) {
-    const persistMode = options.persistMode || 'workbook';
-    const csvStateFilePath = options.csvStateFilePath || '';
-    const sourceFilePath = options.sourceFilePath || filePath;
-    const csvStateRows = persistMode === 'csv-state' ? loadCsvStateRows(csvStateFilePath) : {};
+function createNoopStatusManager() {
+    return {
+        saveWorkbook() { },
+        updateTaskStatus(task, status) {
+            task.status = normalizeStatusValue(status);
+        },
+        getTaskStatus(task) {
+            return normalizeStatusValue(task.status);
+        },
+        updateTaskProgress(task, step) {
+            task.progressStep = normalizeProgressStep(step);
+        },
+        ensureTaskProgressAtLeast(task, step) {
+            const current = normalizeProgressStep(task.progressStep);
+            const next = normalizeProgressStep(step);
+            if (progressRank(next) > progressRank(current)) {
+                task.progressStep = next;
+            }
+        },
+        getTaskProgress(task) {
+            return normalizeProgressStep(task.progressStep);
+        },
+        statusColumnIndex: -1,
+        progressColumnIndex: -1,
+        sheetName: ''
+    };
+}
 
+function loadTasksFromExcel(filePath) {
     const workbook = XLSX.readFile(filePath);
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) {
@@ -570,8 +583,6 @@ function loadTasksFromExcel(filePath, options = {}) {
     const headers = [];
     let appNameColumnIndex = -1;
     let packageNameColumnIndex = -1;
-    let statusColumnIndex = -1;
-    let progressColumnIndex = -1;
 
     for (let c = range.s.c; c <= range.e.c; c++) {
         const headerValue = getCellText(sheet, headerRowIndex, c);
@@ -583,12 +594,6 @@ function loadTasksFromExcel(filePath, options = {}) {
         if (packageNameColumnIndex < 0 && PACKAGE_NAME_HEADER_CANDIDATES.has(normalized)) {
             packageNameColumnIndex = c;
         }
-        if (statusColumnIndex < 0 && STATUS_HEADER_CANDIDATES.has(normalized)) {
-            statusColumnIndex = c;
-        }
-        if (progressColumnIndex < 0 && PROGRESS_HEADER_CANDIDATES.has(normalized)) {
-            progressColumnIndex = c;
-        }
     }
 
     if (appNameColumnIndex < 0 || packageNameColumnIndex < 0) {
@@ -598,44 +603,8 @@ function loadTasksFromExcel(filePath, options = {}) {
         );
     }
 
-    let statusColumnAdded = false;
-    if (statusColumnIndex < 0 && persistMode === 'workbook') {
-        statusColumnIndex = range.e.c + 1;
-        setCellText(sheet, headerRowIndex, statusColumnIndex, 'status');
-        range.e.c = statusColumnIndex;
-        sheet['!ref'] = XLSX.utils.encode_range(range);
-        statusColumnAdded = true;
-        console.log('[STATUS] Added "status" column automatically.');
-    }
-
-    let progressColumnAdded = false;
-    if (progressColumnIndex < 0 && persistMode === 'workbook') {
-        progressColumnIndex = range.e.c + 1;
-        setCellText(sheet, headerRowIndex, progressColumnIndex, 'progress_step');
-        range.e.c = progressColumnIndex;
-        sheet['!ref'] = XLSX.utils.encode_range(range);
-        progressColumnAdded = true;
-        console.log('[PROGRESS] Added "progress_step" column automatically.');
-    }
-
-    const statusManager = persistMode === 'csv-state'
-        ? createCsvStatusManager({
-            stateFilePath: csvStateFilePath,
-            sourceFilePath,
-            rows: csvStateRows
-        })
-        : createExcelStatusManager({
-            filePath,
-            workbook,
-            sheetName: firstSheetName,
-            sheet,
-            statusColumnIndex,
-            progressColumnIndex
-        });
-
-    if (statusColumnAdded || progressColumnAdded) {
-        statusManager.saveWorkbook();
-    }
+    const statusManager = createNoopStatusManager();
+    statusManager.sheetName = firstSheetName;
 
     const tasks = [];
 
@@ -644,23 +613,6 @@ function loadTasksFromExcel(filePath, options = {}) {
         const appName = getCellText(sheet, r, appNameColumnIndex);
         const rawPackageName = getCellText(sheet, r, packageNameColumnIndex);
         const packageName = rawPackageName.toLowerCase();
-        const rowState = persistMode === 'csv-state'
-            ? (csvStateRows[getCsvStateKey(packageName)] || {})
-            : null;
-
-        let status = persistMode === 'csv-state'
-            ? normalizeStatusValue(rowState.status)
-            : normalizeStatusValue(getCellText(sheet, r, statusColumnIndex));
-        let progressStep = persistMode === 'csv-state'
-            ? normalizeProgressStep(rowState.progressStep)
-            : normalizeProgressStep(getCellText(sheet, r, progressColumnIndex));
-
-        if (status === STATUS_DONE && !progressStep) {
-            progressStep = PROGRESS_STEP_DONE;
-        }
-        if (status !== STATUS_DONE && progressStep) {
-            status = STATUS_PARTIAL;
-        }
 
         if (!appName && !packageName) {
             continue;
@@ -686,8 +638,8 @@ function loadTasksFromExcel(filePath, options = {}) {
             packageName,
             rowNumber: excelRowNumber,
             sheetRowIndex: r,
-            status,
-            progressStep
+            status: '',
+            progressStep: ''
         });
     }
 
@@ -870,109 +822,56 @@ async function runOnce(task, appListUrl, statusManager) {
             }
         };
 
-        const tryOpenExistingAppByPackage = async () => {
-            console.log(`[RESUME] Trying to locate existing app by package: ${packageName}`);
-            const searchInput = page.locator(
-                'input[placeholder*="Search by app or package"], input[aria-label*="Search by app or package"], input[type="search"]'
-            ).first();
-            if (await searchInput.isVisible().catch(() => false)) {
-                await searchInput.fill(packageName);
-                await delay(page, 1200);
-            }
-
-            const appTextContainer = page.locator('div.text-container')
-                .filter({ hasText: packageName })
-                .first();
-
-            const rowFound = await appTextContainer.waitFor({ state: 'visible', timeout: 12000 })
-                .then(() => true)
-                .catch(() => false);
-            if (!rowFound) {
-                console.log('[RESUME] Existing app row not found on list.');
-                return false;
-            }
-
-            const viewAppBtn = appTextContainer.locator(
-                'xpath=ancestor::tr[1]//*[self::a[contains(@href,"/app/")] or self::a[contains(normalize-space(.), "View app")] or self::button[contains(normalize-space(.), "View app")] or @role="button"]'
-            ).first();
-
-            if (!(await viewAppBtn.isVisible().catch(() => false))) {
-                console.log('[RESUME] Existing app row found but View app button is not visible.');
-                return false;
-            }
-
-            await retryAction(async () => {
-                await viewAppBtn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
-                await viewAppBtn.click({ timeout: 10000 });
-            }, 'Click View app in matched row', 2);
-
-            try {
-                await page.waitForURL(/\/app\/\d+/, { timeout: 60000 });
-            } catch (_) {
-                console.log('Warning: URL did not switch to app details in time, continuing...');
-            }
-            await delay(page, 4000);
-            appBasePath = extractAppBasePathFromCurrentUrl();
-            console.log('[RESUME] Existing app opened:', appBasePath);
-            return true;
-        };
-
         await openAppListPage();
+        console.log('Clicking "Create app" button on list page...');
+        const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
+        const appNameInput = page.locator(
+            '[debug-id="app-name-input"] input, input[aria-label="App name"]'
+        ).first();
+        const packageNameInput = page.locator(
+            '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
+        ).first();
 
-        const existingOpened = await tryOpenExistingAppByPackage();
-        if (existingOpened) {
-            statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
-            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
-        } else {
-            console.log('Clicking "Create app" button on list page...');
-            const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
-            const appNameInput = page.locator(
-                '[debug-id="app-name-input"] input, input[aria-label="App name"]'
-            ).first();
-            const packageNameInput = page.locator(
-                '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
-            ).first();
+        const openCreateFormWithRetry = async () => {
+            const maxAttempts = 4;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                console.log(`[CREATE] Open form attempt ${attempt}/${maxAttempts}...`);
 
-            const openCreateFormWithRetry = async () => {
-                const maxAttempts = 4;
-                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                    console.log(`[CREATE] Open form attempt ${attempt}/${maxAttempts}...`);
-
-                    if (!(await createBtn.isVisible().catch(() => false))) {
-                        console.log('[CREATE] Create app button not visible, reopening app list...');
-                        await openAppListPage();
-                    }
-
-                    await retryAction(async () => {
-                        await createBtn.waitFor({ state: 'visible', timeout: 20000 });
-                        await createBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-                        await createBtn.click({ timeout: 10000 });
-                    }, `Click Create App button (attempt ${attempt})`, 2);
-
-                    const formReady = await appNameInput
-                        .waitFor({ state: 'visible', timeout: 15000 })
-                        .then(() => true)
-                        .catch(() => false);
-
-                    if (formReady) {
-                        await delay(page, 1500);
-                        return;
-                    }
-
-                    console.log('[CREATE] Form still not visible after click.');
-                    if (attempt < maxAttempts) {
-                        console.log('[CREATE] Reopening app list and retrying...');
-                        await openAppListPage();
-                    }
+                if (!(await createBtn.isVisible().catch(() => false))) {
+                    console.log('[CREATE] Create app button not visible, reopening app list...');
+                    await openAppListPage();
                 }
 
-                throw new Error(
-                    'Create app form did not appear after multiple click attempts. ' +
-                    'Likely page not fully ready or click not accepted by UI.'
-                );
-            };
+                await retryAction(async () => {
+                    await createBtn.waitFor({ state: 'visible', timeout: 20000 });
+                    await createBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await createBtn.click({ timeout: 10000 });
+                }, `Click Create App button (attempt ${attempt})`, 2);
 
-            await openCreateFormWithRetry();
+                const formReady = await appNameInput
+                    .waitFor({ state: 'visible', timeout: 15000 })
+                    .then(() => true)
+                    .catch(() => false);
+
+                if (formReady) {
+                    await delay(page, 1500);
+                    return;
+                }
+
+                console.log('[CREATE] Form still not visible after click.');
+                if (attempt < maxAttempts) {
+                    console.log('[CREATE] Reopening app list and retrying...');
+                    await openAppListPage();
+                }
+            }
+
+            throw new Error(
+                'Create app form did not appear after multiple click attempts. ' +
+                'Likely page not fully ready or click not accepted by UI.'
+            );
+        };
+
+        await openCreateFormWithRetry();
 
             // Fill app name and package name.
             console.log('Filling App name...');
@@ -1094,7 +993,6 @@ async function runOnce(task, appListUrl, statusManager) {
                 console.log('[CREATE] Detected failure message: "Your app couldn\'t be created".');
                 console.log('[CREATE] Waiting 5 seconds then marking this row as FAILED...');
                 await delay(page, 5000);
-                statusManager.updateTaskStatus(task, STATUS_FAILED);
 
                 const createFailedError = new Error(
                     'Create blocked by Play Console: Your app couldn\'t be created.'
@@ -1129,10 +1027,7 @@ async function runOnce(task, appListUrl, statusManager) {
             appBasePath = extractAppBasePathFromCurrentUrl();
             console.log('App path:', appBasePath);
 
-            // Package exists in Play Console now; persist PARTIAL for safe resume.
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
-            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
-        }
 
         // --- Helper functions inside this run ---
         async function goToAppContent() {
@@ -1222,215 +1117,93 @@ async function runOnce(task, appListUrl, statusManager) {
             }, `Click "${text}" button`);
         }
 
-        async function getDeclarationCardState(sectionTitle) {
-            const startByAria = await page.locator(
-                `button[aria-label="Start ${sectionTitle} declaration"], button[aria-label*="Start ${sectionTitle} declaration"]`
-            ).count().catch(() => 0);
-            if (startByAria > 0) {
-                return 'pending';
-            }
-
-            const startByCard = await page.locator(
-                `xpath=//*[normalize-space(text())="${sectionTitle}"]/ancestor::*[.//button[contains(normalize-space(.), "Start declaration")]][1]//button[contains(normalize-space(.), "Start declaration")]`
-            ).count().catch(() => 0);
-            if (startByCard > 0) {
-                return 'pending';
-            }
-
-            const titleCount = await page.locator(
-                `xpath=//*[normalize-space(text())="${sectionTitle}"]`
-            ).count().catch(() => 0);
-            if (titleCount > 0) {
-                return 'done';
-            }
-
-            // Not shown on current page: unknown, do NOT auto-advance progress.
-            return 'unknown';
-        }
-
-        async function resolveDeclarationCardState(sectionTitle) {
-            let state = await getDeclarationCardState(sectionTitle);
-            if (state !== 'unknown') {
-                return state;
-            }
-
-            // Retry once after a lightweight refresh to avoid false "unknown" due to UI lag.
-            await delay(page, 1500);
-            await goToAppContent();
-            state = await getDeclarationCardState(sectionTitle);
-            return state;
-        }
-
-        async function syncProgressStepFromUiIfPossible() {
-            if (task.status !== STATUS_PARTIAL) {
-                return;
-            }
-
-            await goToAppContent();
-
-            const checkpoints = [
-                { title: 'Ads', step: PROGRESS_STEP_ADS_DONE },
-                { title: 'App access', step: PROGRESS_STEP_APP_ACCESS_DONE },
-                { title: 'Target audience and content', step: PROGRESS_STEP_AUDIENCE_DONE },
-                { title: 'Advertising ID', step: PROGRESS_STEP_AD_ID_DONE },
-                { title: 'Government apps', step: PROGRESS_STEP_GOV_DONE },
-                { title: 'Financial features', step: PROGRESS_STEP_FINANCE_DONE },
-                { title: 'Health apps', step: PROGRESS_STEP_HEALTH_DONE }
-            ];
-
-            let detectedStep = '';
-            for (const checkpoint of checkpoints) {
-                const state = await resolveDeclarationCardState(checkpoint.title);
-                if (state === 'pending') {
-                    break;
-                }
-                if (state === 'done') {
-                    detectedStep = checkpoint.step;
-                    continue;
-                }
-                break;
-            }
-
-            if (detectedStep && progressRank(detectedStep) > progressRank(task.progressStep)) {
-                statusManager.ensureTaskProgressAtLeast(task, detectedStep);
-                statusManager.updateTaskStatus(task, STATUS_PARTIAL);
-                console.log(`[RESUME] UI checkpoint detected, progress corrected to ${detectedStep}.`);
-            }
-        }
-
-        // --- Execute declarations flow by current UI state only ---
+        // --- Execute declarations flow in strict one-pass mode ---
         const markStepDone = (doneStep) => {
             statusManager.updateTaskProgress(task, doneStep);
-            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
-        };
-        const ensureKnownDeclarationState = async (sectionTitle) => {
-            const state = await resolveDeclarationCardState(sectionTitle);
-            if (state === 'unknown') {
-                throw new Error(
-                    `[DECLARATION] "${sectionTitle}" state is unknown. ` +
-                    'Stop this row to avoid false progress advancement.'
-                );
-            }
-            return state;
         };
 
         await goToAppContent();
-        const adsState = await ensureKnownDeclarationState('Ads');
-        if (adsState === 'pending') {
-            console.log('Executing declaration 1/7: Ads...');
-            await clickStartDeclaration('Ads');
-            await selectRadio(/^No/);
-            await clickMainButton('Save');
-            await waitSaved(page);
-        } else {
-            console.log('[RESUME] Ads already done on UI, skip filling.');
-        }
+        console.log('Executing declaration 1/7: Ads...');
+        await clickStartDeclaration('Ads');
+        await selectRadio(/^No/);
+        await clickMainButton('Save');
+        await waitSaved(page);
         markStepDone(PROGRESS_STEP_ADS_DONE);
 
         await goToAppContent();
-        const appAccessState = await ensureKnownDeclarationState('App access');
-        if (appAccessState === 'pending') {
-            console.log('Executing declaration 2/7: App access...');
-            await clickStartDeclaration('App access');
-            await selectRadio('All functionality in my app is available without any access restrictions');
-            await clickMainButton('Save');
-            await waitSaved(page);
-        } else {
-            console.log('[RESUME] App access already done on UI, skip filling.');
-        }
+        console.log('Executing declaration 2/7: App access...');
+        await clickStartDeclaration('App access');
+        await selectRadio('All functionality in my app is available without any access restrictions');
+        await clickMainButton('Save');
+        await waitSaved(page);
         markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
 
         await goToAppContent();
-        const audienceState = await ensureKnownDeclarationState('Target audience and content');
-        if (audienceState === 'pending') {
-            console.log('Executing declaration 3/7: Target audience and content...');
-            await clickStartDeclaration('Target audience and content');
-            await selectCheckbox('13-15');
-            await selectCheckbox('16-17');
-            await selectCheckbox('18 and over');
-            await clickMainButton('Next');
+        console.log('Executing declaration 3/7: Target audience and content...');
+        await clickStartDeclaration('Target audience and content');
+        await selectCheckbox('13-15');
+        await selectCheckbox('16-17');
+        await selectCheckbox('18 and over');
+        await clickMainButton('Next');
 
-            let stepsLeft = 5;
-            while (stepsLeft-- > 0) {
-                const appealText = "Could your store listing unintentionally appeal to children?";
-                if (await page.locator(`text=${appealText}`).first().isVisible().catch(() => false)) {
-                    console.log('Handling child appeal question...');
-                    await selectRadio(/^No/);
-                }
-                const isSaveVisible = await page.locator('button:has-text("Save"), [debug-id="main-button"]:has-text("Save")').first().isVisible().catch(() => false);
-                if (isSaveVisible) {
-                    await clickMainButton('Save');
-                    break;
-                }
-                const isNextVisible = await page.locator('button:has-text("Next"), [debug-id="main-button"]:has-text("Next")').first().isVisible().catch(() => false);
-                if (isNextVisible) {
-                    await clickMainButton('Next');
-                } else {
-                    console.log('Warning: Target Audience path reached end or got stuck.');
-                    break;
-                }
+        let stepsLeft = 5;
+        while (stepsLeft-- > 0) {
+            const appealText = "Could your store listing unintentionally appeal to children?";
+            if (await page.locator(`text=${appealText}`).first().isVisible().catch(() => false)) {
+                console.log('Handling child appeal question...');
+                await selectRadio(/^No/);
             }
-            await waitSaved(page);
-        } else {
-            console.log('[RESUME] Target audience and content already done on UI, skip filling.');
+            const isSaveVisible = await page.locator('button:has-text("Save"), [debug-id="main-button"]:has-text("Save")').first().isVisible().catch(() => false);
+            if (isSaveVisible) {
+                await clickMainButton('Save');
+                break;
+            }
+            const isNextVisible = await page.locator('button:has-text("Next"), [debug-id="main-button"]:has-text("Next")').first().isVisible().catch(() => false);
+            if (isNextVisible) {
+                await clickMainButton('Next');
+            } else {
+                console.log('Warning: Target Audience path reached end or got stuck.');
+                break;
+            }
         }
+        await waitSaved(page);
         markStepDone(PROGRESS_STEP_AUDIENCE_DONE);
 
         await goToAppContent();
-        const adIdState = await ensureKnownDeclarationState('Advertising ID');
-        if (adIdState === 'pending') {
-            console.log('Executing declaration 4/7: Advertising ID...');
-            await clickStartDeclaration('Advertising ID');
-            await selectRadio(/^Yes/);
-            await selectCheckbox('Developer communications');
-            await clickMainButton('Save');
-            await waitSaved(page);
-            await page.evaluate(() => window.scrollTo(0, 0));
-            await delay(page, 2000);
-        } else {
-            console.log('[RESUME] Advertising ID already done on UI, skip filling.');
-        }
+        console.log('Executing declaration 4/7: Advertising ID...');
+        await clickStartDeclaration('Advertising ID');
+        await selectRadio(/^Yes/);
+        await selectCheckbox('Developer communications');
+        await clickMainButton('Save');
+        await waitSaved(page);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await delay(page, 2000);
         markStepDone(PROGRESS_STEP_AD_ID_DONE);
 
         await goToAppContent();
-        const govState = await ensureKnownDeclarationState('Government apps');
-        if (govState === 'pending') {
-            console.log('Executing declaration 5/7: Government apps...');
-            await clickStartDeclaration('Government apps');
-            await selectRadio(/^No/);
-            await clickMainButton('Save');
-            await waitSaved(page);
-        } else {
-            console.log('[RESUME] Government apps already done on UI, skip filling.');
-        }
+        console.log('Executing declaration 5/7: Government apps...');
+        await clickStartDeclaration('Government apps');
+        await selectRadio(/^No/);
+        await clickMainButton('Save');
+        await waitSaved(page);
         markStepDone(PROGRESS_STEP_GOV_DONE);
 
         await goToAppContent();
-        const financeState = await ensureKnownDeclarationState('Financial features');
-        if (financeState === 'pending') {
-            console.log('Executing declaration 6/7: Financial features...');
-            await clickStartDeclaration('Financial features');
-            await selectCheckbox("My app doesn't provide any financial features");
-            await clickMainButton('Next');
-            await clickMainButton('Save');
-            await waitSaved(page);
-        } else {
-            console.log('[RESUME] Financial features already done on UI, skip filling.');
-        }
+        console.log('Executing declaration 6/7: Financial features...');
+        await clickStartDeclaration('Financial features');
+        await selectCheckbox("My app doesn't provide any financial features");
+        await clickMainButton('Next');
+        await clickMainButton('Save');
+        await waitSaved(page);
         markStepDone(PROGRESS_STEP_FINANCE_DONE);
 
         await goToAppContent();
-        const healthState = await ensureKnownDeclarationState('Health apps');
-        if (healthState === 'pending') {
-            console.log('Executing declaration 7/7: Health apps...');
-            await clickStartDeclaration('Health apps');
-            await selectCheckbox('My app does not have any health features');
-            await clickMainButton('Next');
-            await clickMainButton('Save');
-            await waitSaved(page);
-        } else {
-            console.log('[RESUME] Health apps already done on UI, skip filling.');
-        }
+        console.log('Executing declaration 7/7: Health apps...');
+        await clickStartDeclaration('Health apps');
+        await selectCheckbox('My app does not have any health features');
+        await clickMainButton('Next');
+        await clickMainButton('Save');
+        await waitSaved(page);
         markStepDone(PROGRESS_STEP_HEALTH_DONE);
 
             // 8. Test and release
@@ -1555,9 +1328,8 @@ async function runOnce(task, appListUrl, statusManager) {
             await delay(page, 3000);
 
             markStepDone(PROGRESS_STEP_COUNTRY_DONE);
-
         statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
-        statusManager.updateTaskStatus(task, STATUS_DONE);
+        task.status = STATUS_DONE;
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
         console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
@@ -1566,16 +1338,6 @@ async function runOnce(task, appListUrl, statusManager) {
         }
         await browser.close();
     } catch (err) {
-        const currentUrl = (page && typeof page.url === 'function') ? page.url() : '';
-        if (currentUrl && /\/app\/\d+/.test(currentUrl) && task.status !== STATUS_DONE) {
-            try {
-                statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
-                statusManager.updateTaskStatus(task, STATUS_PARTIAL);
-            } catch (_) {
-                // Ignore status write failures in error path; keep original error as primary signal.
-            }
-        }
-
         console.error(`[FATAL ERROR] In iteration: ${err.message}`);
         if (page && !page.isClosed()) {
             await page.close().catch(() => { });
@@ -1590,33 +1352,19 @@ async function runOnce(task, appListUrl, statusManager) {
     const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
     const inputFilePath = resolveInputExcelFile(inputFileArg);
     const runtimeInput = resolveRuntimeInput(inputFilePath);
-    const { tasks, sheetName, statusManager } = loadTasksFromExcel(
-        runtimeInput.runtimeWorkbookPath,
-        runtimeInput.isCsvInput
-            ? {
-                persistMode: 'csv-state',
-                csvStateFilePath: runtimeInput.stateFilePath,
-                sourceFilePath: runtimeInput.sourceFilePath
-            }
-            : { persistMode: 'workbook' }
-    );
-    const selectedTasks = tasks.filter(task => task.status !== STATUS_DONE);
-    const skippedDone = tasks.length - selectedTasks.length;
+    const { tasks, sheetName, statusManager } = loadTasksFromExcel(runtimeInput.runtimeWorkbookPath);
+    const selectedTasks = tasks;
 
     console.log(`Developer console URL loaded from: ${configPath}`);
     console.log(`Loaded ${tasks.length} rows from input file: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
     if (runtimeInput.isCsvInput) {
         console.log(`[CSV] Source file: ${runtimeInput.sourceFilePath}`);
-        console.log(`[CSV] Runtime state file: ${runtimeInput.stateFilePath}`);
-        console.log('[CSV] No Excel file will be generated in source directory.');
+        console.log('[CSV] Direct read mode enabled (no state file, no workbook output).');
     }
-    if (skippedDone > 0) {
-        console.log(`[STATUS] Skipping ${skippedDone} row(s) already marked DONE.`);
-    }
-    console.log(`Will execute ${selectedTasks.length} iteration(s), excluding DONE rows.`);
+    console.log(`Will execute ${selectedTasks.length} iteration(s).`);
 
     if (!selectedTasks.length) {
-        console.log('No pending rows to execute. All rows are DONE.');
+        console.log('No pending rows to execute.');
         return;
     }
 
@@ -1639,12 +1387,8 @@ async function runOnce(task, appListUrl, statusManager) {
             runStats.success += 1;
         } catch (e) {
             const isCreateFailedToast = String(e && e.code || '') === 'CREATE_FAILED_TOAST';
-            if (isCreateFailedToast && task.status !== STATUS_FAILED) {
-                try {
-                    statusManager.updateTaskStatus(task, STATUS_FAILED);
-                } catch (_) {
-                    // Keep original error flow.
-                }
+            if (isCreateFailedToast) {
+                task.status = STATUS_FAILED;
             }
 
             runStats.failed.push({

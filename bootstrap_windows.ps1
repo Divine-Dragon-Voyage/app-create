@@ -9,7 +9,8 @@
     [string]$BrowserExtraArgs = "",
     [switch]$RunApp,
     [string]$ExcelFile = "",
-    [string]$DeveloperUrl = ""
+    [string]$DeveloperUrl = "",
+    [switch]$HoldWindowOnSuccess
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,6 +50,23 @@ function Hold-WindowOnError {
         [void][System.Console]::ReadKey($true)
     } catch {
         # Fallback for environments where ReadKey is unavailable.
+        Start-Sleep -Seconds 10
+    }
+}
+
+function Hold-WindowOnSuccess {
+    param([string]$HintMessage = "Task finished. You can review the logs.")
+
+    if (-not [Environment]::UserInteractive) {
+        return
+    }
+
+    Write-Host ""
+    Write-Ok $HintMessage
+    Write-Host "Press any key to close..."
+    try {
+        [void][System.Console]::ReadKey($true)
+    } catch {
         Start-Sleep -Seconds 10
     }
 }
@@ -101,6 +119,9 @@ function Ensure-Admin {
     }
     if ($DeveloperUrl) {
         $argList += @("-DeveloperUrl", "`"$DeveloperUrl`"")
+    }
+    if ($HoldWindowOnSuccess) {
+        $argList += "-HoldWindowOnSuccess"
     }
 
     $process = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argList -Wait -PassThru
@@ -682,6 +703,9 @@ function Main {
     if ($RunApp) {
         try {
             Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile -DeveloperConsoleUrl $DeveloperUrl
+            if ($HoldWindowOnSuccess) {
+                Hold-WindowOnSuccess
+            }
             return
         } catch {
             Hold-WindowOnError -HintMessage "App run failed."
