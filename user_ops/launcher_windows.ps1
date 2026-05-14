@@ -13,6 +13,65 @@ function Show-ErrorAndExit {
     exit $Code
 }
 
+function Show-RunSummaryDialog {
+    param(
+        [string]$SummaryPath,
+        [int]$ExitCode
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SummaryPath)) {
+        return
+    }
+    if (-not (Test-Path $SummaryPath -PathType Leaf)) {
+        return
+    }
+
+    try {
+        $payload = Get-Content -Path $SummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $failedCount = 0
+        if ($payload.failedCount -ne $null) {
+            $failedCount = [int]$payload.failedCount
+        } elseif ($payload.failed -is [System.Array]) {
+            $failedCount = $payload.failed.Count
+        }
+
+        $lines = @(
+            "本次总读取: $($payload.totalLoaded) 条",
+            "本次计划执行: $($payload.planned) 条",
+            "成功: $($payload.success) 条",
+            "失败: $failedCount 条"
+        )
+
+        if ($failedCount -gt 0 -and $payload.failed) {
+            $lines += "失败应用:"
+            foreach ($item in $payload.failed) {
+                $lines += "- $($item.appName) ($($item.packageName))"
+            }
+        }
+
+        $text = ($lines -join "`r`n")
+        $icon = if ($ExitCode -eq 0) {
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        } else {
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        }
+
+        [System.Windows.Forms.MessageBox]::Show(
+            $text,
+            "运行结果",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            $icon
+        ) | Out-Null
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            "读取运行汇总失败: $($_.Exception.Message)`r`n文件: $SummaryPath",
+            "运行结果",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        ) | Out-Null
+    }
+}
+
 function Build-DeveloperUrl {
     param([string]$InputText)
 
@@ -194,6 +253,11 @@ if (-not $startRequested) {
 
 $developerConfigPath = Join-Path $DataDir "developer_url.txt"
 Set-Content -Path $developerConfigPath -Value $selectedDeveloperUrl -Encoding UTF8
+$runSummaryPath = Join-Path $DataDir "last_run_summary.json"
+if (Test-Path $runSummaryPath -PathType Leaf) {
+    Remove-Item -Path $runSummaryPath -Force -ErrorAction SilentlyContinue
+}
+$env:APP_CREATE_RUN_SUMMARY_PATH = $runSummaryPath
 
 $args = @(
     "-NoProfile",
@@ -209,4 +273,5 @@ if ($AutoLaunchBrowser) {
 }
 
 $process = Start-Process -FilePath "powershell.exe" -ArgumentList $args -Wait -PassThru
+Show-RunSummaryDialog -SummaryPath $runSummaryPath -ExitCode $process.ExitCode
 exit $process.ExitCode

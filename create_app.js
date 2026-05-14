@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 
@@ -28,6 +27,7 @@ const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
 const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
 const DEVELOPER_URL_ENV = 'APP_CREATE_DEVELOPER_URL';
 const DEVELOPER_ID_ENV = 'APP_CREATE_DEVELOPER_ID';
+const RUN_SUMMARY_PATH_ENV = 'APP_CREATE_RUN_SUMMARY_PATH';
 const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
 const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\u5ea6', '\u6b65\u9aa4']);
 const STATUS_PARTIAL = 'PARTIAL';
@@ -295,27 +295,18 @@ function progressRank(step) {
     return PROGRESS_STEP_ORDER.indexOf(normalizeProgressStep(step));
 }
 
-function showWindowsSummaryPopup(summaryText) {
-    if (process.platform !== 'win32') {
+function writeRunSummaryFile(summaryPayload) {
+    const configuredPath = String(process.env[RUN_SUMMARY_PATH_ENV] || '').trim();
+    if (!configuredPath) {
         return;
     }
     try {
-        const ps = [
-            'Add-Type -AssemblyName System.Windows.Forms;',
-            '[void][System.Windows.Forms.MessageBox]::Show(',
-            '  $args[0],',
-            '  "App Create 运行结果",',
-            '  [System.Windows.Forms.MessageBoxButtons]::OK,',
-            '  [System.Windows.Forms.MessageBoxIcon]::Information',
-            ')'
-        ].join(' ');
-        execFileSync(
-            'powershell.exe',
-            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps, summaryText],
-            { stdio: 'ignore', windowsHide: true }
-        );
+        const resolvedPath = path.resolve(configuredPath);
+        fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+        fs.writeFileSync(resolvedPath, JSON.stringify(summaryPayload, null, 2), 'utf8');
+        console.log(`[SUMMARY] Run summary saved to: ${resolvedPath}`);
     } catch (err) {
-        console.log(`[WARN] Cannot show summary popup. ${err.message}`);
+        console.log(`[WARN] Cannot save run summary file. ${err.message}`);
     }
 }
 
@@ -1415,25 +1406,35 @@ async function runOnce(task, appListUrl, statusManager) {
     const failedCount = runStats.failed.length;
     const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
     const summaryLines = [
-        `本次总读取: ${runStats.totalLoaded} 条`,
-        `本次计划执行: ${runStats.planned} 条`,
-        `成功: ${runStats.success} 条`,
-        `失败: ${failedCount} 条`
+        `Total loaded: ${runStats.totalLoaded}`,
+        `Planned: ${runStats.planned}`,
+        `Success: ${runStats.success}`,
+        `Failed: ${failedCount}`
     ];
     if (failedCount > 0) {
-        summaryLines.push('失败应用:');
+        summaryLines.push('Failed apps:');
         for (const name of failedNames) {
             summaryLines.push(`- ${name}`);
         }
     }
     const summaryText = summaryLines.join('\n');
+    const summaryPayload = {
+        generatedAt: new Date().toISOString(),
+        totalLoaded: runStats.totalLoaded,
+        planned: runStats.planned,
+        success: runStats.success,
+        failedCount,
+        failed: runStats.failed,
+        summaryText
+    };
 
     console.log('================ Run Summary ================');
     console.log(summaryText);
     console.log('=============================================');
-    showWindowsSummaryPopup(summaryText);
+    writeRunSummaryFile(summaryPayload);
 })().catch(err => {
     console.error(`[INIT ERROR] ${err.message}`);
     process.exit(1);
 });
+
 
