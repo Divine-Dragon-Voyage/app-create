@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 
@@ -30,6 +32,7 @@ const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
 const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\u5ea6', '\u6b65\u9aa4']);
 const STATUS_PARTIAL = 'PARTIAL';
 const STATUS_DONE = 'DONE';
+const STATUS_FAILED = 'FAILED';
 const PROGRESS_STEP_APP_CREATED = 'APP_CREATED';
 const PROGRESS_STEP_ADS_DONE = 'ADS_DONE';
 const PROGRESS_STEP_APP_ACCESS_DONE = 'APP_ACCESS_DONE';
@@ -55,7 +58,7 @@ const PROGRESS_STEP_ORDER = [
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
 const DEVELOPER_URL_CONFIG_FILE = 'developer_url.txt';
 const SUPPORTED_INPUT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv']);
-const CSV_WORKBOOK_SUFFIX = '.__work.xlsx';
+const CSV_STATE_DIR_NAME = 'csv-state';
 const DEVELOPER_URL_TEMPLATE = [
     '# Paste your Play Console developer URL below (single line).',
     '# Example:',
@@ -211,55 +214,68 @@ function resolveInputExcelFile(inputFileArg) {
     return path.resolve(process.cwd(), dataFiles[0]);
 }
 
-function getCsvWorkWorkbookPath(csvPath) {
-    const dir = path.dirname(csvPath);
-    const base = path.basename(csvPath, path.extname(csvPath));
-    return path.join(dir, `${base}${CSV_WORKBOOK_SUFFIX}`);
+function buildCsvStateFilePath(csvPath) {
+    const configDir = resolveConfigDirectory();
+    const stateDir = path.resolve(configDir, CSV_STATE_DIR_NAME);
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const key = path.resolve(csvPath).toLowerCase();
+    const hash = crypto.createHash('sha1').update(key).digest('hex');
+    return path.join(stateDir, `${hash}.json`);
 }
 
-function createWorkbookFromCsv(csvPath, outputWorkbookPath) {
-    const workbook = XLSX.readFile(csvPath);
-    if (!workbook.SheetNames.length) {
-        throw new Error(`CSV file has no readable sheet: ${csvPath}`);
-    }
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!firstSheet || !firstSheet['!ref']) {
-        throw new Error(`CSV file is empty: ${csvPath}`);
-    }
-    XLSX.writeFile(workbook, outputWorkbookPath);
-}
-
-function resolveRuntimeWorkbook(inputFilePath) {
+function resolveRuntimeInput(inputFilePath) {
     const ext = path.extname(inputFilePath).toLowerCase();
     if (ext !== '.csv') {
         return {
             sourceFilePath: inputFilePath,
             runtimeWorkbookPath: inputFilePath,
             isCsvInput: false,
-            createdWorkWorkbook: false,
-            reusedWorkWorkbook: false
+            stateFilePath: ''
         };
     }
 
-    const workWorkbookPath = getCsvWorkWorkbookPath(inputFilePath);
-    if (fs.existsSync(workWorkbookPath)) {
-        return {
-            sourceFilePath: inputFilePath,
-            runtimeWorkbookPath: workWorkbookPath,
-            isCsvInput: true,
-            createdWorkWorkbook: false,
-            reusedWorkWorkbook: true
-        };
-    }
-
-    createWorkbookFromCsv(inputFilePath, workWorkbookPath);
     return {
         sourceFilePath: inputFilePath,
-        runtimeWorkbookPath: workWorkbookPath,
+        runtimeWorkbookPath: inputFilePath,
         isCsvInput: true,
-        createdWorkWorkbook: true,
-        reusedWorkWorkbook: false
+        stateFilePath: buildCsvStateFilePath(inputFilePath)
     };
+}
+
+function loadCsvStateRows(stateFilePath) {
+    if (!stateFilePath || !fs.existsSync(stateFilePath)) {
+        return {};
+    }
+
+    try {
+        const raw = fs.readFileSync(stateFilePath, 'utf8');
+        const parsed = JSON.parse(raw || '{}');
+        if (!parsed || typeof parsed !== 'object') {
+            return {};
+        }
+        if (!parsed.rows || typeof parsed.rows !== 'object') {
+            return {};
+        }
+        return parsed.rows;
+    } catch (_) {
+        return {};
+    }
+}
+
+function saveCsvStateRows(stateFilePath, sourceFilePath, rows) {
+    if (!stateFilePath) return;
+
+    const payload = {
+        sourceFilePath,
+        updatedAt: new Date().toISOString(),
+        rows
+    };
+    fs.writeFileSync(stateFilePath, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+function getCsvStateKey(packageName) {
+    return String(packageName || '').trim().toLowerCase();
 }
 
 function pickHeader(headers, candidates) {
@@ -275,6 +291,7 @@ function normalizeStatusValue(value) {
     const text = String(value || '').trim().toUpperCase();
     if (text === STATUS_DONE) return STATUS_DONE;
     if (text === STATUS_PARTIAL) return STATUS_PARTIAL;
+    if (text === STATUS_FAILED) return STATUS_FAILED;
     return '';
 }
 
@@ -286,6 +303,30 @@ function normalizeProgressStep(value) {
 
 function progressRank(step) {
     return PROGRESS_STEP_ORDER.indexOf(normalizeProgressStep(step));
+}
+
+function showWindowsSummaryPopup(summaryText) {
+    if (process.platform !== 'win32') {
+        return;
+    }
+    try {
+        const ps = [
+            'Add-Type -AssemblyName System.Windows.Forms;',
+            '[void][System.Windows.Forms.MessageBox]::Show(',
+            '  $args[0],',
+            '  "App Create 运行结果",',
+            '  [System.Windows.Forms.MessageBoxButtons]::OK,',
+            '  [System.Windows.Forms.MessageBoxIcon]::Information',
+            ')'
+        ].join(' ');
+        execFileSync(
+            'powershell.exe',
+            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps, summaryText],
+            { stdio: 'ignore', windowsHide: true }
+        );
+    } catch (err) {
+        console.log(`[WARN] Cannot show summary popup. ${err.message}`);
+    }
 }
 
 function getCellText(sheet, rowIndex, colIndex) {
@@ -391,7 +432,127 @@ function createExcelStatusManager({
     };
 }
 
-function loadTasksFromExcel(filePath) {
+function createCsvStatusManager({
+    stateFilePath,
+    sourceFilePath,
+    rows
+}) {
+    const persist = () => saveCsvStateRows(stateFilePath, sourceFilePath, rows);
+
+    return {
+        saveWorkbook() {
+            persist();
+        },
+        updateTaskStatus(task, status) {
+            const nextStatus = normalizeStatusValue(status);
+            if (!nextStatus) {
+                throw new Error(`Invalid status "${status}" for row ${task.rowNumber}.`);
+            }
+
+            const key = getCsvStateKey(task.packageName);
+            const currentRow = rows[key] || {};
+            const currentStatus = normalizeStatusValue(currentRow.status);
+            if (currentStatus === nextStatus) {
+                task.status = nextStatus;
+                return;
+            }
+
+            rows[key] = {
+                ...currentRow,
+                rowNumber: task.rowNumber,
+                appName: task.appName,
+                packageName: task.packageName,
+                status: nextStatus,
+                progressStep: normalizeProgressStep(currentRow.progressStep)
+            };
+            persist();
+            task.status = nextStatus;
+
+            console.log(
+                `[STATUS] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ` +
+                `${currentStatus || 'EMPTY'} -> ${nextStatus}`
+            );
+        },
+        getTaskStatus(task) {
+            const key = getCsvStateKey(task.packageName);
+            return normalizeStatusValue((rows[key] || {}).status);
+        },
+        updateTaskProgress(task, step) {
+            const nextStep = normalizeProgressStep(step);
+            if (!nextStep) {
+                throw new Error(`Invalid progress step "${step}" for row ${task.rowNumber}.`);
+            }
+
+            const key = getCsvStateKey(task.packageName);
+            const currentRow = rows[key] || {};
+            const currentStep = normalizeProgressStep(currentRow.progressStep);
+            if (currentStep === nextStep) {
+                task.progressStep = nextStep;
+                return;
+            }
+
+            rows[key] = {
+                ...currentRow,
+                rowNumber: task.rowNumber,
+                appName: task.appName,
+                packageName: task.packageName,
+                status: normalizeStatusValue(currentRow.status),
+                progressStep: nextStep
+            };
+            persist();
+            task.progressStep = nextStep;
+
+            console.log(
+                `[PROGRESS] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ` +
+                `${currentStep || 'EMPTY'} -> ${nextStep}`
+            );
+        },
+        ensureTaskProgressAtLeast(task, step) {
+            const nextStep = normalizeProgressStep(step);
+            if (!nextStep) {
+                throw new Error(`Invalid progress step "${step}" for row ${task.rowNumber}.`);
+            }
+
+            const key = getCsvStateKey(task.packageName);
+            const currentRow = rows[key] || {};
+            const currentStep = normalizeProgressStep(currentRow.progressStep);
+            if (progressRank(currentStep) >= progressRank(nextStep)) {
+                task.progressStep = currentStep || task.progressStep;
+                return;
+            }
+
+            rows[key] = {
+                ...currentRow,
+                rowNumber: task.rowNumber,
+                appName: task.appName,
+                packageName: task.packageName,
+                status: normalizeStatusValue(currentRow.status),
+                progressStep: nextStep
+            };
+            persist();
+            task.progressStep = nextStep;
+
+            console.log(
+                `[PROGRESS] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ` +
+                `${currentStep || 'EMPTY'} -> ${nextStep}`
+            );
+        },
+        getTaskProgress(task) {
+            const key = getCsvStateKey(task.packageName);
+            return normalizeProgressStep((rows[key] || {}).progressStep);
+        },
+        statusColumnIndex: -1,
+        progressColumnIndex: -1,
+        sheetName: 'Sheet1'
+    };
+}
+
+function loadTasksFromExcel(filePath, options = {}) {
+    const persistMode = options.persistMode || 'workbook';
+    const csvStateFilePath = options.csvStateFilePath || '';
+    const sourceFilePath = options.sourceFilePath || filePath;
+    const csvStateRows = persistMode === 'csv-state' ? loadCsvStateRows(csvStateFilePath) : {};
+
     const workbook = XLSX.readFile(filePath);
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) {
@@ -438,7 +599,7 @@ function loadTasksFromExcel(filePath) {
     }
 
     let statusColumnAdded = false;
-    if (statusColumnIndex < 0) {
+    if (statusColumnIndex < 0 && persistMode === 'workbook') {
         statusColumnIndex = range.e.c + 1;
         setCellText(sheet, headerRowIndex, statusColumnIndex, 'status');
         range.e.c = statusColumnIndex;
@@ -448,7 +609,7 @@ function loadTasksFromExcel(filePath) {
     }
 
     let progressColumnAdded = false;
-    if (progressColumnIndex < 0) {
+    if (progressColumnIndex < 0 && persistMode === 'workbook') {
         progressColumnIndex = range.e.c + 1;
         setCellText(sheet, headerRowIndex, progressColumnIndex, 'progress_step');
         range.e.c = progressColumnIndex;
@@ -457,14 +618,20 @@ function loadTasksFromExcel(filePath) {
         console.log('[PROGRESS] Added "progress_step" column automatically.');
     }
 
-    const statusManager = createExcelStatusManager({
-        filePath,
-        workbook,
-        sheetName: firstSheetName,
-        sheet,
-        statusColumnIndex,
-        progressColumnIndex
-    });
+    const statusManager = persistMode === 'csv-state'
+        ? createCsvStatusManager({
+            stateFilePath: csvStateFilePath,
+            sourceFilePath,
+            rows: csvStateRows
+        })
+        : createExcelStatusManager({
+            filePath,
+            workbook,
+            sheetName: firstSheetName,
+            sheet,
+            statusColumnIndex,
+            progressColumnIndex
+        });
 
     if (statusColumnAdded || progressColumnAdded) {
         statusManager.saveWorkbook();
@@ -477,8 +644,16 @@ function loadTasksFromExcel(filePath) {
         const appName = getCellText(sheet, r, appNameColumnIndex);
         const rawPackageName = getCellText(sheet, r, packageNameColumnIndex);
         const packageName = rawPackageName.toLowerCase();
-        let status = normalizeStatusValue(getCellText(sheet, r, statusColumnIndex));
-        let progressStep = normalizeProgressStep(getCellText(sheet, r, progressColumnIndex));
+        const rowState = persistMode === 'csv-state'
+            ? (csvStateRows[getCsvStateKey(packageName)] || {})
+            : null;
+
+        let status = persistMode === 'csv-state'
+            ? normalizeStatusValue(rowState.status)
+            : normalizeStatusValue(getCellText(sheet, r, statusColumnIndex));
+        let progressStep = persistMode === 'csv-state'
+            ? normalizeProgressStep(rowState.progressStep)
+            : normalizeProgressStep(getCellText(sheet, r, progressColumnIndex));
 
         if (status === STATUS_DONE && !progressStep) {
             progressStep = PROGRESS_STEP_DONE;
@@ -753,15 +928,46 @@ async function runOnce(task, appListUrl, statusManager) {
                 '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
             ).first();
 
-            await retryAction(async () => {
-                await createBtn.waitFor({ state: 'visible', timeout: 20000 });
-                await createBtn.click({ timeout: 10000 });
-            }, 'Click Create App button');
+            const openCreateFormWithRetry = async () => {
+                const maxAttempts = 4;
+                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                    console.log(`[CREATE] Open form attempt ${attempt}/${maxAttempts}...`);
 
-            await retryAction(async () => {
-                await appNameInput.waitFor({ state: 'visible', timeout: 30000 });
-            }, 'Wait create app form');
-            await delay(page, 1500);
+                    if (!(await createBtn.isVisible().catch(() => false))) {
+                        console.log('[CREATE] Create app button not visible, reopening app list...');
+                        await openAppListPage();
+                    }
+
+                    await retryAction(async () => {
+                        await createBtn.waitFor({ state: 'visible', timeout: 20000 });
+                        await createBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                        await createBtn.click({ timeout: 10000 });
+                    }, `Click Create App button (attempt ${attempt})`, 2);
+
+                    const formReady = await appNameInput
+                        .waitFor({ state: 'visible', timeout: 15000 })
+                        .then(() => true)
+                        .catch(() => false);
+
+                    if (formReady) {
+                        await delay(page, 1500);
+                        return;
+                    }
+
+                    console.log('[CREATE] Form still not visible after click.');
+                    if (attempt < maxAttempts) {
+                        console.log('[CREATE] Reopening app list and retrying...');
+                        await openAppListPage();
+                    }
+                }
+
+                throw new Error(
+                    'Create app form did not appear after multiple click attempts. ' +
+                    'Likely page not fully ready or click not accepted by UI.'
+                );
+            };
+
+            await openCreateFormWithRetry();
 
             // Fill app name and package name.
             console.log('Filling App name...');
@@ -845,13 +1051,54 @@ async function runOnce(task, appListUrl, statusManager) {
                 await submitBtn.click({ timeout: 10000 });
             }, 'Final Create button');
 
-            try {
-                await page.waitForFunction(
-                    () => /\/app\/\d+/.test(window.location.href),
-                    null,
-                    { timeout: 120000 }
+            const createFailedToastCandidates = [
+                page.locator('text=/Your app couldn.?t be created/i').first(),
+                page.locator('span[aria-live="polite"]').filter({
+                    hasText: /Your app couldn.?t be created/i
+                }).first(),
+                page.locator('[role="alert"]').filter({
+                    hasText: /Your app couldn.?t be created/i
+                }).first()
+            ];
+
+            let createOutcome = '';
+            const createOutcomeDeadline = Date.now() + 120000;
+            while (Date.now() < createOutcomeDeadline) {
+                const currentUrl = page.url();
+                if (/\/app\/\d+/.test(currentUrl)) {
+                    createOutcome = 'success';
+                    break;
+                }
+
+                let createFailedVisible = false;
+                for (const candidate of createFailedToastCandidates) {
+                    if (await candidate.isVisible().catch(() => false)) {
+                        createFailedVisible = true;
+                        break;
+                    }
+                }
+                if (createFailedVisible) {
+                    createOutcome = 'failed';
+                    break;
+                }
+
+                await page.waitForTimeout(500);
+            }
+
+            if (createOutcome === 'failed') {
+                console.log('[CREATE] Detected failure message: "Your app couldn\'t be created".');
+                console.log('[CREATE] Waiting 5 seconds then marking this row as FAILED...');
+                await delay(page, 5000);
+                statusManager.updateTaskStatus(task, STATUS_FAILED);
+
+                const createFailedError = new Error(
+                    'Create blocked by Play Console: Your app couldn\'t be created.'
                 );
-            } catch (waitError) {
+                createFailedError.code = 'CREATE_FAILED_TOAST';
+                throw createFailedError;
+            }
+
+            if (createOutcome !== 'success') {
                 const currentUrl = page.url();
                 const visibleErrors = await page.locator(
                     '[role="alert"], .error, .errors, .warning, .mdc-snackbar, text=/error|invalid|already|unable|failed/i'
@@ -865,7 +1112,7 @@ async function runOnce(task, appListUrl, statusManager) {
                     'Create app did not finish in time. ' +
                     `Current URL: ${currentUrl}. ` +
                     `Visible errors: ${compactErrors || 'none'}. ` +
-                    `Original wait error: ${waitError.message}`
+                    'Likely still blocked on page.'
                 );
             }
 
@@ -1342,8 +1589,17 @@ async function runOnce(task, appListUrl, statusManager) {
     const { inputFileArg } = parseCliArgs();
     const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
     const inputFilePath = resolveInputExcelFile(inputFileArg);
-    const runtimeInput = resolveRuntimeWorkbook(inputFilePath);
-    const { tasks, sheetName, statusManager } = loadTasksFromExcel(runtimeInput.runtimeWorkbookPath);
+    const runtimeInput = resolveRuntimeInput(inputFilePath);
+    const { tasks, sheetName, statusManager } = loadTasksFromExcel(
+        runtimeInput.runtimeWorkbookPath,
+        runtimeInput.isCsvInput
+            ? {
+                persistMode: 'csv-state',
+                csvStateFilePath: runtimeInput.stateFilePath,
+                sourceFilePath: runtimeInput.sourceFilePath
+            }
+            : { persistMode: 'workbook' }
+    );
     const selectedTasks = tasks.filter(task => task.status !== STATUS_DONE);
     const skippedDone = tasks.length - selectedTasks.length;
 
@@ -1351,12 +1607,8 @@ async function runOnce(task, appListUrl, statusManager) {
     console.log(`Loaded ${tasks.length} rows from input file: ${path.basename(inputFilePath)} (sheet: ${sheetName})`);
     if (runtimeInput.isCsvInput) {
         console.log(`[CSV] Source file: ${runtimeInput.sourceFilePath}`);
-        console.log(`[CSV] Working workbook: ${runtimeInput.runtimeWorkbookPath}`);
-        if (runtimeInput.createdWorkWorkbook) {
-            console.log('[CSV] Created new working workbook from CSV. Status/progress will be saved in this workbook.');
-        } else if (runtimeInput.reusedWorkWorkbook) {
-            console.log('[CSV] Reusing existing working workbook. Resume state is read from this workbook.');
-        }
+        console.log(`[CSV] Runtime state file: ${runtimeInput.stateFilePath}`);
+        console.log('[CSV] No Excel file will be generated in source directory.');
     }
     if (skippedDone > 0) {
         console.log(`[STATUS] Skipping ${skippedDone} row(s) already marked DONE.`);
@@ -1368,6 +1620,13 @@ async function runOnce(task, appListUrl, statusManager) {
         return;
     }
 
+    const runStats = {
+        totalLoaded: tasks.length,
+        planned: selectedTasks.length,
+        success: 0,
+        failed: []
+    };
+
     for (let i = 0; i < selectedTasks.length; i++) {
         const task = selectedTasks[i];
         console.log(
@@ -1377,7 +1636,25 @@ async function runOnce(task, appListUrl, statusManager) {
         );
         try {
             await runOnce(task, appListUrl, statusManager);
+            runStats.success += 1;
         } catch (e) {
+            const isCreateFailedToast = String(e && e.code || '') === 'CREATE_FAILED_TOAST';
+            if (isCreateFailedToast && task.status !== STATUS_FAILED) {
+                try {
+                    statusManager.updateTaskStatus(task, STATUS_FAILED);
+                } catch (_) {
+                    // Keep original error flow.
+                }
+            }
+
+            runStats.failed.push({
+                appName: task.appName,
+                packageName: task.packageName,
+                reason: isCreateFailedToast
+                    ? "Your app couldn't be created"
+                    : String((e && e.message) || 'Unknown error')
+            });
+
             console.error(`Iteration ${i + 1} failed but continuing...`);
             if (isCdpConnectionError(e)) {
                 throw e;
@@ -1390,6 +1667,27 @@ async function runOnce(task, appListUrl, statusManager) {
             await new Promise(r => setTimeout(r, wait));
         }
     }
+
+    const failedCount = runStats.failed.length;
+    const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
+    const summaryLines = [
+        `本次总读取: ${runStats.totalLoaded} 条`,
+        `本次计划执行: ${runStats.planned} 条`,
+        `成功: ${runStats.success} 条`,
+        `失败: ${failedCount} 条`
+    ];
+    if (failedCount > 0) {
+        summaryLines.push('失败应用:');
+        for (const name of failedNames) {
+            summaryLines.push(`- ${name}`);
+        }
+    }
+    const summaryText = summaryLines.join('\n');
+
+    console.log('================ Run Summary ================');
+    console.log(summaryText);
+    console.log('=============================================');
+    showWindowsSummaryPopup(summaryText);
 })().catch(err => {
     console.error(`[INIT ERROR] ${err.message}`);
     process.exit(1);
