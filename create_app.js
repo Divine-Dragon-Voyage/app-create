@@ -955,6 +955,51 @@ async function runOnce(task, appListUrl, statusManager) {
                     hasText: /Your app couldn.?t be created/i
                 }).first()
             ];
+            const recoverToAppListAfterCreateFailure = async () => {
+                const homeLinkByProvidedElement = page
+                    .locator('a.item-link[role="button"][href*="/app-list"]')
+                    .filter({
+                        has: page.locator('span.item-label', { hasText: /^Home$/i })
+                    })
+                    .first();
+
+                const homeLinkFallback = page.locator(
+                    'a.item-link[href*="/app-list"], a[href*="/app-list"], a:has-text("Home"), [role="link"]:has-text("Home"), [role="button"]:has-text("Home")'
+                ).first();
+
+                const clickHomeAndWaitBack = async (homeLink) => {
+                    await homeLink.waitFor({ state: 'visible', timeout: 15000 });
+                    await homeLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await homeLink.click({ timeout: 10000 });
+                    await delay(page, 2500);
+                    await page.waitForURL(/\/app-list(?:\?|$)/, { timeout: 30000 }).catch(() => { });
+                    await createBtn.waitFor({ state: 'visible', timeout: 30000 });
+                };
+
+                const recoveredByProvidedSelector = await retryAction(async () => {
+                    await clickHomeAndWaitBack(homeLinkByProvidedElement);
+                }, 'Recover to app list via Home (provided selector)', 2).then(() => true).catch(() => false);
+
+                if (recoveredByProvidedSelector) {
+                    console.log('[CREATE] Recovered to app list via Home (provided selector).');
+                    return;
+                }
+
+                const recoveredByFallbackSelector = await retryAction(async () => {
+                    await clickHomeAndWaitBack(homeLinkFallback);
+                }, 'Recover to app list via Home (fallback selector)', 2).then(() => true).catch(() => false);
+
+                if (recoveredByFallbackSelector) {
+                    console.log('[CREATE] Recovered to app list via Home (fallback selector).');
+                    return;
+                }
+
+                console.log('[CREATE] Home recovery failed, fallback to app-list URL...');
+                await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' });
+                await delay(page, 3500);
+                await createBtn.waitFor({ state: 'visible', timeout: 30000 });
+                console.log('[CREATE] Recovered to app list via URL fallback.');
+            };
 
             let createOutcome = '';
             const createOutcomeDeadline = Date.now() + 120000;
@@ -982,8 +1027,10 @@ async function runOnce(task, appListUrl, statusManager) {
 
             if (createOutcome === 'failed') {
                 console.log('[CREATE] Detected failure message: "Your app couldn\'t be created".');
-                console.log('[CREATE] Waiting 5 seconds then marking this row as FAILED...');
-                await delay(page, 5000);
+                const recoverDelayMs = 4000 + Math.floor(Math.random() * 3001);
+                console.log(`[CREATE] Waiting ${Math.round(recoverDelayMs / 1000)}s before recovery to Home...`);
+                await delay(page, recoverDelayMs);
+                await recoverToAppListAfterCreateFailure();
 
                 const createFailedError = new Error(
                     'Create blocked by Play Console: Your app couldn\'t be created.'
