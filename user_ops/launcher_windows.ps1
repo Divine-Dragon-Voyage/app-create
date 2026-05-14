@@ -44,23 +44,23 @@ function Show-RunSummaryDialog {
         }
 
         $lines = @(
-            "本次总读取: $($payload.totalLoaded) 条",
-            "本次计划执行: $($payload.planned) 条",
-            "✅ 成功: $successCount 条",
-            "❌ 失败: $failedCount 条"
+            "Total loaded: $($payload.totalLoaded)",
+            "Planned: $($payload.planned)",
+            "Success: $successCount",
+            "Failed: $failedCount"
         )
 
         if ($successItems.Count -gt 0) {
-            $lines += "成功应用:"
+            $lines += "Successful apps:"
             foreach ($item in $successItems) {
-                $lines += "✅ $($item.appName) ($($item.packageName))"
+                $lines += "[OK] $($item.appName) ($($item.packageName))"
             }
         }
 
         if ($failedCount -gt 0 -and $payload.failed) {
-            $lines += "失败应用:"
+            $lines += "Failed apps:"
             foreach ($item in $payload.failed) {
-                $lines += "❌ $($item.appName) ($($item.packageName))"
+                $lines += "[FAIL] $($item.appName) ($($item.packageName))"
             }
         }
 
@@ -73,14 +73,14 @@ function Show-RunSummaryDialog {
 
         [System.Windows.Forms.MessageBox]::Show(
             $text,
-            "运行结果",
+            "Run Summary",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             $icon
         ) | Out-Null
     } catch {
         [System.Windows.Forms.MessageBox]::Show(
-            "读取运行汇总失败: $($_.Exception.Message)`r`n文件: $SummaryPath",
-            "运行结果",
+            "Failed to read run summary: $($_.Exception.Message)`r`nFile: $SummaryPath",
+            "Run Summary",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Warning
         ) | Out-Null

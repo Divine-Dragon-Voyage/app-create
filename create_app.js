@@ -1412,21 +1412,21 @@ async function runOnce(task, appListUrl, statusManager) {
     const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
     const successNames = runStats.successItems.map(item => `${item.appName} (${item.packageName})`);
     const summaryLines = [
-        `总读取: ${runStats.totalLoaded}`,
-        `计划执行: ${runStats.planned}`,
-        `✅ 成功: ${runStats.success}`,
-        `❌ 失败: ${failedCount}`
+        `Total loaded: ${runStats.totalLoaded}`,
+        `Planned: ${runStats.planned}`,
+        `Success: ${runStats.success}`,
+        `Failed: ${failedCount}`
     ];
     if (successNames.length > 0) {
-        summaryLines.push('成功应用:');
+        summaryLines.push('Successful apps:');
         for (const name of successNames) {
-            summaryLines.push(`✅ ${name}`);
+            summaryLines.push(`[OK] ${name}`);
         }
     }
     if (failedCount > 0) {
-        summaryLines.push('失败应用:');
+        summaryLines.push('Failed apps:');
         for (const name of failedNames) {
-            summaryLines.push(`❌ ${name}`);
+            summaryLines.push(`[FAIL] ${name}`);
         }
     }
     const summaryText = summaryLines.join('\n');
