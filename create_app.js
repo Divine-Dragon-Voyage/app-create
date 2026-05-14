@@ -1363,6 +1363,7 @@ async function runOnce(task, appListUrl, statusManager) {
         totalLoaded: tasks.length,
         planned: selectedTasks.length,
         success: 0,
+        successItems: [],
         failed: []
     };
 
@@ -1376,6 +1377,10 @@ async function runOnce(task, appListUrl, statusManager) {
         try {
             await runOnce(task, appListUrl, statusManager);
             runStats.success += 1;
+            runStats.successItems.push({
+                appName: task.appName,
+                packageName: task.packageName
+            });
         } catch (e) {
             const isCreateFailedToast = String(e && e.code || '') === 'CREATE_FAILED_TOAST';
             if (isCreateFailedToast) {
@@ -1405,16 +1410,23 @@ async function runOnce(task, appListUrl, statusManager) {
 
     const failedCount = runStats.failed.length;
     const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
+    const successNames = runStats.successItems.map(item => `${item.appName} (${item.packageName})`);
     const summaryLines = [
-        `Total loaded: ${runStats.totalLoaded}`,
-        `Planned: ${runStats.planned}`,
-        `Success: ${runStats.success}`,
-        `Failed: ${failedCount}`
+        `总读取: ${runStats.totalLoaded}`,
+        `计划执行: ${runStats.planned}`,
+        `✅ 成功: ${runStats.success}`,
+        `❌ 失败: ${failedCount}`
     ];
+    if (successNames.length > 0) {
+        summaryLines.push('成功应用:');
+        for (const name of successNames) {
+            summaryLines.push(`✅ ${name}`);
+        }
+    }
     if (failedCount > 0) {
-        summaryLines.push('Failed apps:');
+        summaryLines.push('失败应用:');
         for (const name of failedNames) {
-            summaryLines.push(`- ${name}`);
+            summaryLines.push(`❌ ${name}`);
         }
     }
     const summaryText = summaryLines.join('\n');
@@ -1423,6 +1435,7 @@ async function runOnce(task, appListUrl, statusManager) {
         totalLoaded: runStats.totalLoaded,
         planned: runStats.planned,
         success: runStats.success,
+        successItems: runStats.successItems,
         failedCount,
         failed: runStats.failed,
         summaryText

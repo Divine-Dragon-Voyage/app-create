@@ -29,23 +29,38 @@ function Show-RunSummaryDialog {
     try {
         $payload = Get-Content -Path $SummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $failedCount = 0
+        $successCount = 0
+        $successItems = @()
         if ($payload.failedCount -ne $null) {
             $failedCount = [int]$payload.failedCount
         } elseif ($payload.failed -is [System.Array]) {
             $failedCount = $payload.failed.Count
         }
+        if ($payload.success -ne $null) {
+            $successCount = [int]$payload.success
+        }
+        if ($payload.successItems -is [System.Array]) {
+            $successItems = $payload.successItems
+        }
 
         $lines = @(
             "本次总读取: $($payload.totalLoaded) 条",
             "本次计划执行: $($payload.planned) 条",
-            "成功: $($payload.success) 条",
-            "失败: $failedCount 条"
+            "✅ 成功: $successCount 条",
+            "❌ 失败: $failedCount 条"
         )
+
+        if ($successItems.Count -gt 0) {
+            $lines += "成功应用:"
+            foreach ($item in $successItems) {
+                $lines += "✅ $($item.appName) ($($item.packageName))"
+            }
+        }
 
         if ($failedCount -gt 0 -and $payload.failed) {
             $lines += "失败应用:"
             foreach ($item in $payload.failed) {
-                $lines += "- $($item.appName) ($($item.packageName))"
+                $lines += "❌ $($item.appName) ($($item.packageName))"
             }
         }
 
