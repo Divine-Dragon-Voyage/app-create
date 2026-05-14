@@ -993,14 +993,67 @@ async function runOnce(task, appListUrl, statusManager) {
                 console.log('Warning: Check availability button not found, continuing...');
             }
 
-            // Randomly choose App or Game.
+            // Randomly choose App or Game, and verify the selected state.
             const isApp = Math.random() < 0.5;
             const typeLabel = isApp ? 'App' : 'Game';
             const typeId = isApp ? 'app-radio' : 'game-radio';
             console.log(`Selecting type: ${typeLabel}`);
-            await retryAction(async () => {
-                await page.locator(`[debug-id="${typeId}"]`).first().click({ timeout: 5000 });
-            }, `Select type: ${typeLabel}`);
+
+            const isTypeSelected = async (targetTypeId) => {
+                const root = page.locator(`[debug-id="${targetTypeId}"]`).first();
+                if (!(await root.isVisible().catch(() => false))) {
+                    return false;
+                }
+
+                const inputRadio = root.locator('input[type="radio"]').first();
+                if (await inputRadio.count().catch(() => 0)) {
+                    if (await inputRadio.isChecked().catch(() => false)) {
+                        return true;
+                    }
+                }
+
+                const roleRadio = root.locator('[role="radio"]').first();
+                if (await roleRadio.count().catch(() => 0)) {
+                    const roleChecked = await roleRadio.getAttribute('aria-checked').catch(() => null);
+                    if (roleChecked === 'true') {
+                        return true;
+                    }
+                }
+
+                const selfChecked = await root.getAttribute('aria-checked').catch(() => null);
+                return selfChecked === 'true';
+            };
+
+            const selectTypeWithVerify = async () => {
+                for (let attempt = 1; attempt <= 4; attempt++) {
+                    const typeRoot = page.locator(`[debug-id="${typeId}"]`).first();
+                    await typeRoot.waitFor({ state: 'visible', timeout: 10000 });
+                    await typeRoot.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await typeRoot.click({ timeout: 10000 });
+                    await delay(page, 900);
+
+                    if (await isTypeSelected(typeId)) {
+                        return;
+                    }
+
+                    // Fallback: click text label if debug-id click didn't stick.
+                    const textTarget = page.getByText(typeLabel, { exact: true }).first();
+                    if (await textTarget.isVisible().catch(() => false)) {
+                        await textTarget.click({ timeout: 8000 }).catch(() => { });
+                        await delay(page, 900);
+                    }
+
+                    if (await isTypeSelected(typeId)) {
+                        return;
+                    }
+
+                    console.log(`[CREATE] Type selection not confirmed (${typeLabel}), retrying (${attempt}/4)...`);
+                }
+
+                throw new Error(`Failed to confirm selected type: ${typeLabel}`);
+            };
+
+            await retryAction(selectTypeWithVerify, `Select type: ${typeLabel}`);
             await delay(page, 2000);
 
             // Select Free.
@@ -1148,12 +1201,22 @@ async function runOnce(task, appListUrl, statusManager) {
                     .filter(Boolean)
                     .slice(0, 3)
                     .join(' | ');
-                throw new Error(
+
+                const recoverDelayMs = 4000 + Math.floor(Math.random() * 3001);
+                console.log(
+                    `[CREATE] Create result unresolved, waiting ${Math.round(recoverDelayMs / 1000)}s before Home recovery...`
+                );
+                await delay(page, recoverDelayMs);
+                await recoverToAppListAfterCreateFailure();
+
+                const unresolvedError = new Error(
                     'Create app did not finish in time. ' +
                     `Current URL: ${currentUrl}. ` +
                     `Visible errors: ${compactErrors || 'none'}. ` +
-                    'Likely still blocked on page.'
+                    'Recovered to app list and will continue next row.'
                 );
+                unresolvedError.code = 'CREATE_FAILED_TIMEOUT';
+                throw unresolvedError;
             }
 
             await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => { });
