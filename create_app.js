@@ -1570,6 +1570,15 @@ async function runOnce(task, appListUrl, statusManager) {
         await browser.close();
     } catch (err) {
         console.error(`[FATAL ERROR] In iteration: ${err.message}`);
+        const errCode = String((err && err.code) || '');
+        const isSoftCreateFailure = errCode === 'CREATE_FAILED_TOAST' || errCode === 'CREATE_FAILED_TIMEOUT';
+
+        if (isSoftCreateFailure) {
+            console.log('[RECOVERY] Soft create failure detected. Keep current page, only disconnect CDP session.');
+            if (browser) await browser.close().catch(() => { });
+            throw err;
+        }
+
         if (page && !page.isClosed()) {
             await page.close().catch(() => { });
         }
@@ -1622,8 +1631,10 @@ async function runOnce(task, appListUrl, statusManager) {
                 packageName: task.packageName
             });
         } catch (e) {
-            const isCreateFailedToast = String(e && e.code || '') === 'CREATE_FAILED_TOAST';
-            if (isCreateFailedToast) {
+            const errorCode = String((e && e.code) || '');
+            const isCreateFailedToast = errorCode === 'CREATE_FAILED_TOAST';
+            const isCreateFailedTimeout = errorCode === 'CREATE_FAILED_TIMEOUT';
+            if (isCreateFailedToast || isCreateFailedTimeout) {
                 task.status = STATUS_FAILED;
             }
 
@@ -1632,7 +1643,9 @@ async function runOnce(task, appListUrl, statusManager) {
                 packageName: task.packageName,
                 reason: isCreateFailedToast
                     ? "Your app couldn't be created"
-                    : String((e && e.message) || 'Unknown error')
+                    : isCreateFailedTimeout
+                        ? 'Create app timed out (recovered to Home).'
+                        : String((e && e.message) || 'Unknown error')
             });
 
             console.error(`Iteration ${i + 1} failed but continuing...`);
