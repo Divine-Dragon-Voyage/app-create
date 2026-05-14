@@ -25,9 +25,11 @@ const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
 const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
 const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
+const LOGIN_WAIT_SECONDS_ENV = 'APP_CREATE_LOGIN_WAIT_SECONDS';
 const DEVELOPER_URL_ENV = 'APP_CREATE_DEVELOPER_URL';
 const DEVELOPER_ID_ENV = 'APP_CREATE_DEVELOPER_ID';
 const RUN_SUMMARY_PATH_ENV = 'APP_CREATE_RUN_SUMMARY_PATH';
+const DEFAULT_LOGIN_WAIT_SECONDS = 900;
 const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
 const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\u5ea6', '\u6b65\u9aa4']);
 const STATUS_PARTIAL = 'PARTIAL';
@@ -652,6 +654,24 @@ function formatDuration(totalSeconds) {
     ].join('').trim() || '0s';
 }
 
+function getManualLoginWaitMs() {
+    const raw = String(process.env[LOGIN_WAIT_SECONDS_ENV] || '').trim();
+    if (!raw) {
+        return DEFAULT_LOGIN_WAIT_SECONDS * 1000;
+    }
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        console.log(
+            `[LOGIN] Invalid ${LOGIN_WAIT_SECONDS_ENV}="${raw}", ` +
+            `fallback to default ${DEFAULT_LOGIN_WAIT_SECONDS}s.`
+        );
+        return DEFAULT_LOGIN_WAIT_SECONDS * 1000;
+    }
+
+    return Math.round(parsed * 1000);
+}
+
 async function delay(page, ms = DELAY) {
     await page.waitForTimeout(ms);
 }
@@ -787,6 +807,7 @@ async function runOnce(task, appListUrl, statusManager) {
             return baseMatch[1];
         };
 
+        const manualLoginWaitMs = getManualLoginWaitMs();
         const openAppListPage = async () => {
             const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
 
@@ -797,6 +818,74 @@ async function runOnce(task, appListUrl, statusManager) {
                     await devItem.click();
                     await delay(page, 7000);
                 }
+            };
+
+            const isLikelyGoogleLoginPage = async () => {
+                const currentUrl = page.url();
+                if (/accounts\.google\.com|ServiceLogin|signin\/v2|identifier/i.test(currentUrl)) {
+                    return true;
+                }
+
+                const loginInputs = page.locator(
+                    'input[type="email"], input[type="password"], input[name="identifier"], input[name="Passwd"], #identifierId'
+                ).first();
+                if (await loginInputs.isVisible().catch(() => false)) {
+                    return true;
+                }
+
+                const loginTexts = page.locator(
+                    'text=/Sign in|登录|Use your Google Account|选择帐号|Choose an account/i'
+                ).first();
+                return await loginTexts.isVisible().catch(() => false);
+            };
+
+            const waitForManualLoginUntilAppListReady = async () => {
+                const startMs = Date.now();
+                let lastProgressLogAt = 0;
+                let lastAppListRedirectAt = 0;
+                console.log(
+                    `[LOGIN] Waiting for manual login/account selection. Timeout: ${Math.round(manualLoginWaitMs / 1000)}s`
+                );
+
+                while (Date.now() - startMs < manualLoginWaitMs) {
+                    if (await createBtn.isVisible().catch(() => false)) {
+                        await ensureDeveloperSelectedIfNeeded();
+                        if (await createBtn.isVisible().catch(() => false)) {
+                            console.log('[LOGIN] Login completed. "Create app" is visible.');
+                            return true;
+                        }
+                    }
+
+                    await ensureDeveloperSelectedIfNeeded();
+
+                    const currentUrl = page.url();
+                    const now = Date.now();
+                    const elapsedMs = now - startMs;
+
+                    if (now - lastProgressLogAt >= 15000) {
+                        const remainingSec = Math.max(
+                            0,
+                            Math.ceil((manualLoginWaitMs - elapsedMs) / 1000)
+                        );
+                        console.log(`[LOGIN] Still waiting for login... ${remainingSec}s left.`);
+                        lastProgressLogAt = now;
+                    }
+
+                    const onGoogleLoginPage = await isLikelyGoogleLoginPage();
+                    if (!onGoogleLoginPage &&
+                        /play\.google\.com\/console/i.test(currentUrl) &&
+                        !/\/app-list(?:\?|$)/.test(currentUrl) &&
+                        now - lastAppListRedirectAt >= 15000) {
+                        console.log('[LOGIN] Returned to Play Console but not app list, redirecting to app-list...');
+                        await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' }).catch(() => { });
+                        await delay(page, 2500);
+                        lastAppListRedirectAt = now;
+                    }
+
+                    await delay(page, 2500);
+                }
+
+                return false;
             };
 
             console.log('Opening app list page...');
@@ -810,6 +899,16 @@ async function runOnce(task, appListUrl, statusManager) {
                 await page.goto(appListUrl, { timeout: 90000, waitUntil: 'domcontentloaded' });
                 await delay(page, 4000);
                 await ensureDeveloperSelectedIfNeeded();
+            }
+
+            if (!(await createBtn.isVisible().catch(() => false))) {
+                const loginReady = await waitForManualLoginUntilAppListReady();
+                if (!loginReady) {
+                    throw new Error(
+                        'Manual login wait timed out. ' +
+                        `Please finish Google login within ${Math.round(manualLoginWaitMs / 1000)} seconds and rerun.`
+                    );
+                }
             }
         };
 
