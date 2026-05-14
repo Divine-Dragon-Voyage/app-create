@@ -1239,8 +1239,21 @@ async function runOnce(task, appListUrl, statusManager) {
                 return 'done';
             }
 
-            // Not shown on current page: treat as already completed / currently irrelevant.
-            return 'absent';
+            // Not shown on current page: unknown, do NOT auto-advance progress.
+            return 'unknown';
+        }
+
+        async function resolveDeclarationCardState(sectionTitle) {
+            let state = await getDeclarationCardState(sectionTitle);
+            if (state !== 'unknown') {
+                return state;
+            }
+
+            // Retry once after a lightweight refresh to avoid false "unknown" due to UI lag.
+            await delay(page, 1500);
+            await goToAppContent();
+            state = await getDeclarationCardState(sectionTitle);
+            return state;
         }
 
         async function syncProgressStepFromUiIfPossible() {
@@ -1262,11 +1275,11 @@ async function runOnce(task, appListUrl, statusManager) {
 
             let detectedStep = '';
             for (const checkpoint of checkpoints) {
-                const state = await getDeclarationCardState(checkpoint.title);
+                const state = await resolveDeclarationCardState(checkpoint.title);
                 if (state === 'pending') {
                     break;
                 }
-                if (state === 'done' || state === 'absent') {
+                if (state === 'done') {
                     detectedStep = checkpoint.step;
                     continue;
                 }
@@ -1286,19 +1299,30 @@ async function runOnce(task, appListUrl, statusManager) {
             statusManager.updateTaskProgress(task, doneStep);
             statusManager.updateTaskStatus(task, STATUS_PARTIAL);
         };
+        const ensureKnownDeclarationState = async (sectionTitle) => {
+            const state = await resolveDeclarationCardState(sectionTitle);
+            if (state === 'unknown') {
+                throw new Error(
+                    `[DECLARATION] "${sectionTitle}" state is unknown. ` +
+                    'Stop this row to avoid false progress advancement.'
+                );
+            }
+            return state;
+        };
 
         await syncProgressStepFromUiIfPossible();
 
         if (shouldRunStep(PROGRESS_STEP_ADS_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('Ads') === 'pending') {
+            const adsState = await ensureKnownDeclarationState('Ads');
+            if (adsState === 'pending') {
                 console.log('Executing declaration 1/7: Ads...');
                 await clickStartDeclaration('Ads');
                 await selectRadio(/^No/);
                 await clickMainButton('Save');
                 await waitSaved(page);
             } else {
-                console.log('[RESUME] Ads not pending on UI, skip filling.');
+                console.log('[RESUME] Ads already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_ADS_DONE);
         } else {
@@ -1307,14 +1331,15 @@ async function runOnce(task, appListUrl, statusManager) {
 
         if (shouldRunStep(PROGRESS_STEP_APP_ACCESS_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('App access') === 'pending') {
+            const appAccessState = await ensureKnownDeclarationState('App access');
+            if (appAccessState === 'pending') {
                 console.log('Executing declaration 2/7: App access...');
                 await clickStartDeclaration('App access');
                 await selectRadio('All functionality in my app is available without any access restrictions');
                 await clickMainButton('Save');
                 await waitSaved(page);
             } else {
-                console.log('[RESUME] App access not pending on UI, skip filling.');
+                console.log('[RESUME] App access already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
         } else {
@@ -1323,7 +1348,8 @@ async function runOnce(task, appListUrl, statusManager) {
 
         if (shouldRunStep(PROGRESS_STEP_AUDIENCE_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('Target audience and content') === 'pending') {
+            const audienceState = await ensureKnownDeclarationState('Target audience and content');
+            if (audienceState === 'pending') {
                 console.log('Executing declaration 3/7: Target audience and content...');
                 await clickStartDeclaration('Target audience and content');
                 await selectCheckbox('13-15');
@@ -1353,7 +1379,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 }
                 await waitSaved(page);
             } else {
-                console.log('[RESUME] Target audience and content not pending on UI, skip filling.');
+                console.log('[RESUME] Target audience and content already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_AUDIENCE_DONE);
         } else {
@@ -1362,7 +1388,8 @@ async function runOnce(task, appListUrl, statusManager) {
 
         if (shouldRunStep(PROGRESS_STEP_AD_ID_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('Advertising ID') === 'pending') {
+            const adIdState = await ensureKnownDeclarationState('Advertising ID');
+            if (adIdState === 'pending') {
                 console.log('Executing declaration 4/7: Advertising ID...');
                 await clickStartDeclaration('Advertising ID');
                 await selectRadio(/^Yes/);
@@ -1372,7 +1399,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 await page.evaluate(() => window.scrollTo(0, 0));
                 await delay(page, 2000);
             } else {
-                console.log('[RESUME] Advertising ID not pending on UI, skip filling.');
+                console.log('[RESUME] Advertising ID already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_AD_ID_DONE);
         } else {
@@ -1381,14 +1408,15 @@ async function runOnce(task, appListUrl, statusManager) {
 
         if (shouldRunStep(PROGRESS_STEP_GOV_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('Government apps') === 'pending') {
+            const govState = await ensureKnownDeclarationState('Government apps');
+            if (govState === 'pending') {
                 console.log('Executing declaration 5/7: Government apps...');
                 await clickStartDeclaration('Government apps');
                 await selectRadio(/^No/);
                 await clickMainButton('Save');
                 await waitSaved(page);
             } else {
-                console.log('[RESUME] Government apps not pending on UI, skip filling.');
+                console.log('[RESUME] Government apps already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_GOV_DONE);
         } else {
@@ -1397,7 +1425,8 @@ async function runOnce(task, appListUrl, statusManager) {
 
         if (shouldRunStep(PROGRESS_STEP_FINANCE_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('Financial features') === 'pending') {
+            const financeState = await ensureKnownDeclarationState('Financial features');
+            if (financeState === 'pending') {
                 console.log('Executing declaration 6/7: Financial features...');
                 await clickStartDeclaration('Financial features');
                 await selectCheckbox("My app doesn't provide any financial features");
@@ -1405,7 +1434,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 await clickMainButton('Save');
                 await waitSaved(page);
             } else {
-                console.log('[RESUME] Financial features not pending on UI, skip filling.');
+                console.log('[RESUME] Financial features already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_FINANCE_DONE);
         } else {
@@ -1414,7 +1443,8 @@ async function runOnce(task, appListUrl, statusManager) {
 
         if (shouldRunStep(PROGRESS_STEP_HEALTH_DONE)) {
             await goToAppContent();
-            if (await getDeclarationCardState('Health apps') === 'pending') {
+            const healthState = await ensureKnownDeclarationState('Health apps');
+            if (healthState === 'pending') {
                 console.log('Executing declaration 7/7: Health apps...');
                 await clickStartDeclaration('Health apps');
                 await selectCheckbox('My app does not have any health features');
@@ -1422,7 +1452,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 await clickMainButton('Save');
                 await waitSaved(page);
             } else {
-                console.log('[RESUME] Health apps not pending on UI, skip filling.');
+                console.log('[RESUME] Health apps already done on UI, skip filling.');
             }
             markStepDone(PROGRESS_STEP_HEALTH_DONE);
         } else {
