@@ -1390,7 +1390,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 await page.waitForURL(/\/test-and-release(?:\/|$)/, { timeout: 120000 });
                 await productionLink.waitFor({ state: 'visible', timeout: 60000 });
             }, 'Open Test and release', 3);
-            await delay(page, 3000);
+            await delay(page, 5000);
 
             // 9. Production
             console.log('Navigating to "Production"...');
@@ -1445,7 +1445,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 await addCountriesBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
                 await addCountriesBtn.click({ timeout: 10000 });
             }, 'Click Add countries / regions', 3);
-            await delay(page, 3000);
+            await delay(page, 5000);
 
             // 12. Select all countries/regions (prefer direct "Select all rows" checkbox)
             console.log('Selecting "Select all rows" checkbox...');
@@ -1494,7 +1494,7 @@ async function runOnce(task, appListUrl, statusManager) {
                     throw new Error('Country / region checkbox is still not checked.');
                 }
             }, 'Ensure Select all rows checkbox checked', 2);
-            await delay(page, 1000);
+            await delay(page, 3000);
 
             // 13. Save countries/regions selection
             console.log('Saving countries/regions selection...');
