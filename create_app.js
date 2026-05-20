@@ -775,6 +775,48 @@ async function waitSaved(page) {
     await delay(page, 5000); // Extra wait after save to allow backend processing.
 }
 
+function scoreConsolePageForReuse(url, appListUrl) {
+    const currentUrl = String(url || '');
+    if (!currentUrl) return -1;
+
+    if (currentUrl.startsWith(appListUrl)) return 100;
+    if (/^https:\/\/play\.google\.com\/console\/u\/\d+\/developers\/\d+\/app-list(?:[/?#]|$)/i.test(currentUrl)) {
+        return 95;
+    }
+    if (/^https:\/\/play\.google\.com\/console\/u\/\d+\/developers\/\d+\/create-new-app(?:[/?#]|$)/i.test(currentUrl)) {
+        return 85;
+    }
+    if (/^https:\/\/play\.google\.com\/console\/u\/\d+\/developers\/\d+\/app\/\d+/i.test(currentUrl)) {
+        return 75;
+    }
+    if (/^https:\/\/play\.google\.com\/console/i.test(currentUrl)) {
+        return 60;
+    }
+
+    return -1;
+}
+
+async function acquireWorkingConsolePage(context, appListUrl) {
+    const pages = context.pages().filter(p => !p.isClosed());
+    let bestPage = null;
+    let bestScore = -1;
+
+    for (const candidate of pages) {
+        const score = scoreConsolePageForReuse(candidate.url(), appListUrl);
+        if (score > bestScore) {
+            bestScore = score;
+            bestPage = candidate;
+        }
+    }
+
+    if (bestPage) {
+        return { page: bestPage, source: 'reused-existing' };
+    }
+
+    const newPage = await context.newPage();
+    return { page: newPage, source: 'created-new' };
+}
+
 async function runOnce(task, appListUrl, statusManager) {
     const startTime = Date.now();
     const appName = task.appName;
@@ -791,7 +833,9 @@ async function runOnce(task, appListUrl, statusManager) {
         browser = cdpConnection.browser;
         console.log(`Connected via CDP: ${cdpConnection.endpoint}`);
         const context = browser.contexts()[0];
-        page = await context.newPage();
+        const pageSelection = await acquireWorkingConsolePage(context, appListUrl);
+        page = pageSelection.page;
+        console.log(`[PAGE] Working tab: ${pageSelection.source} | ${page.url() || 'about:blank'}`);
 
         await page.bringToFront();
         await ensureBrowserWindowMaximized(page);
@@ -1206,7 +1250,7 @@ async function runOnce(task, appListUrl, statusManager) {
                     return;
                 }
 
-                await buttonByCard.waitFor({ state: 'visible', timeout: 12000 });
+                await buttonByCard.waitFor({ state: 'visible', timeout: 20000 });
                 await buttonByCard.scrollIntoViewIfNeeded({ timeout: 5000 });
                 await buttonByCard.click({ timeout: 10000 });
             }, `Start ${sectionTitle} declaration`);
@@ -1516,15 +1560,11 @@ async function runOnce(task, appListUrl, statusManager) {
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
         console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
-        if (page && !page.isClosed()) {
-            await page.close().catch(() => { });
-        }
+        // Keep the working tab for reuse in next iteration; only disconnect CDP client.
         await browser.close();
     } catch (err) {
         console.error(`[FATAL ERROR] In iteration: ${err.message}`);
-        if (page && !page.isClosed()) {
-            await page.close().catch(() => { });
-        }
+        // Keep the working tab for reuse/debugging; only disconnect CDP client.
         if (browser) await browser.close().catch(() => { });
         throw err;
     }

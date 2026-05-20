@@ -1,0 +1,308 @@
+﻿点击保存完成 国家 后
+点击回 monitor and improve
+元素属性为
+<a buttondecorator="" class="item-link _ngcontent-krb-20" tabindex="0" role="button" aria-disabled="false" href="/console/u/0/developers/5670537042830157059/app/4976315631964687455/monitor"><!----><!----><console-icon class="item-icon _nghost-krb-21 _ngcontent-krb-20"><material-icon clickabletooltiptarget="" class="_ngcontent-krb-21 _nghost-krb-11" aria-live="off" aria-hidden="true" tabindex="-1"><i class="material-icon-i material-icons-extended _ngcontent-krb-11" role="img" aria-hidden="true">vital_signs</i></material-icon><!----></console-icon><span class="item-label _ngcontent-krb-20">Monitor and improve</span><!----></a>
+或
+#a74AE8946-57F1-4903-BE6B-22256C1EC607--465 > div > navigation-item:nth-child(4) > div > a
+然后再点击回
+元素为
+<a buttondecorator="" class="item-link _ngcontent-krb-20" tabindex="0" role="button" aria-disabled="false" href="/console/u/0/developers/5670537042830157059/app/4976315631964687455/app-content/overview"><!----><material-icon class="non-objective-expand-icon _nghost-krb-11 _ngcontent-krb-20 hidden" flip=""><i class="material-icon-i material-icons-extended _ngcontent-krb-11" role="img" aria-hidden="true">arrow_right</i></material-icon><!----><span class="item-label _ngcontent-krb-20">App content</span><!----></a>
+找到 3 declarations need attention下的或者privacy policy 
+元素为
+<console-header class="header _nghost-krb-25 _ngcontent-krb-38" debug-id="console-section-header" type="dense-section"><div class="pc-wide-space-elements _ngcontent-krb-25"><!----><div class="header _ngcontent-krb-25"><div class="header-line pc-flex _ngcontent-krb-25 pc-wrap"><div class="title-line pc-center-vertically pc-flex _ngcontent-krb-25"><!----><div class="before-title-items _ngcontent-krb-25"></div><!----><div class="pc-no-form-extra-padding-left _ngcontent-krb-25"><!----><div class="pc-center-vertically pc-space-elements pc-flex _ngcontent-krb-25"><!----><!----><div class="main-text _ngcontent-krb-25" aria-live="off"><!----><!----><simple-html debug-id="header-text" class="_ngcontent-krb-25 _nghost-krb-32" role="heading" aria-level="3"><span class="simple-html-contents _ngcontent-krb-32">Privacy policy</span></simple-html><!----></div></div></div><!----><!----><!----><div class="after-title-items _ngcontent-krb-25"></div></div><div class="action-items pc-flex _ngcontent-krb-25 action-items-fixed-height"><div action-items="" class="_ngcontent-krb-38">  <!----> <!----></div></div></div><div class="description-text _ngcontent-krb-25"><div class="description _ngcontent-krb-38" debug-id="console-section-description" description=""><div description="" class="_ngcontent-krb-111">Adding a privacy policy to your store listing helps provide transparency about how you treat sensitive user and device data. <a target="_blank" rel="noopener" aria-label="Learn more about Privacy policy declaration Opens in a new tab" href="https://support.google.com/googleplay/android-developer/answer/10144311">Learn more</a></div></div></div></div></div></console-header>
+下面的
+startdeclaration按钮
+元素是
+<button class="mdc-button mdc-button--unelevated _ngcontent-krb-111" debug-id="manage-declaration-cta" aria-label="Start Privacy policy declaration"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><span class="mdc-button__label _ngcontent-krb-111">Start declaration</span></button>
+并点击
+等待页面加载进入
+点击选中input框 
+元素为
+<input class="mdc-text-field__input _ngcontent-krb-50" debugid="acx_264709916" focusableelement="" type="text" aria-label="Privacy policy URL" aria-labelledby="aC8F1348A-F15B-4FA3-9A75-E9B7F5249C49--0" aria-controls="aD460E568-6C40-4E67-8C28-70E0F37281B4--0" aria-describedby="aD460E568-6C40-4E67-8C28-70E0F37281B4--0" aria-invalid="false" aria-readonly="false">
+选中后 等待几秒打开新标签页 网址为https://sites.google.com/
+将焦点转为这个网页
+等待打开网址
+点击
+元素为 
+<img src="https://ssl.gstatic.com/docs/templates/thumbnails/sites-blank-googlecolors.png" alt="">
+等待页面加载
+然后打开新网址  https://appgenie-ai.com/user
+等待页面加载
+输入账号 元素为
+<input placeholder="请输入用户名 / 邮箱 / 手机号" id="account" aria-required="true" class="ant-input css-151uw82" type="text" value="">
+或
+#account
+或
+//*[@id="account"]
+输入密码 元素为
+<input placeholder="请输入密码" id="password" aria-required="true" class="ant-input css-151uw82" type="password">
+或
+#password
+或
+//*[@id="password"]
+输入完成后点击登陆  元素为
+<button type="submit" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-primary ant-btn-color-primary ant-btn-variant-solid ant-btn-block"><span>登 录</span></button>
+或
+#root > div > div > div > div > form > div:nth-child(3) > div > div > div > div > button
+或
+//*[@id="root"]/div/div/div/div/form/div[3]/div/div/div/div/button
+等待页面加载
+点击我的任务
+元素为
+<span class="ant-menu-title-content">我的任务</span>
+等待加载
+找到匹配的谷歌邮箱 
+元素为
+<tr class="ant-table-row ant-table-row-level-0" data-row-key="95064ea2-612e-4f57-91b0-ccac559a5964"><td class="ant-table-cell"><div class="ant-space css-151uw82 ant-space-vertical css-var-_r_0_" style="line-height: 1.35;"><div class="ant-space-item"><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="gap: 4px;"><div class="ant-space-item"><a class="ant-typography ant-typography-link css-151uw82 css-var-_r_0_" href="https://home.geliyun.com/i/remote/2514?type=share&amp;key=01038147cbd548caa3071e65d591bd02&amp;ipAddress=47.254.125.224%E8%AE%BF%E9%97%AE%E5%AF%86%E7%A0%81%EF%BC%9AC0tWiz" target="_blank" rel="noreferrer noopener">ezechimaaaa567@gmail.com</a></div><div class="ant-space-item"><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-text ant-btn-color-default ant-btn-variant-text ant-btn-sm ant-btn-icon-only" style="width: 18px; height: 18px; min-width: 18px; padding: 0px; color: rgb(191, 191, 191);"><span class="ant-btn-icon"><span role="img" aria-label="copy" class="anticon anticon-copy" style="font-size: 11px; color: rgb(191, 191, 191);"><svg viewBox="64 64 896 896" focusable="false" data-icon="copy" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M832 64H296c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h496v688c0 4.4 3.6 8 8 8h56c4.4 0 8-3.6 8-8V96c0-17.7-14.3-32-32-32zM704 192H192c-17.7 0-32 14.3-32 32v530.7c0 8.5 3.4 16.6 9.4 22.6l173.3 173.3c2.2 2.2 4.7 4 7.4 5.5v1.9h4.2c3.5 1.3 7.2 2 11 2H704c17.7 0 32-14.3 32-32V224c0-17.7-14.3-32-32-32zM350 856.2L263.9 770H350v86.2zM664 888H414V746c0-22.1-17.9-40-40-40H232V264h432v624z"></path></svg></span></span></button></div></div></div><div class="ant-space-item"><span class="ant-typography ant-typography-secondary ant-typography-ellipsis ant-typography-ellipsis-single-line css-151uw82 css-var-_r_0_" style="font-size: 12px;">备注：暂无</span></div></div></td><td class="ant-table-cell"><div class="ant-space css-151uw82 ant-space-vertical css-var-_r_0_"><div class="ant-space-item"><span>总量：9</span></div></div></td><td class="ant-table-cell"><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="gap: 4px;"><div class="ant-space-item"><span class="ant-tag ant-tag-filled ant-tag-gold css-151uw82 css-var-_r_0_" style="margin-inline-end: 0px;">待提审 9</span></div></div></td><td class="ant-table-cell"><div class="ant-space css-151uw82 ant-space-vertical css-var-_r_0_" style="line-height: 1.35;"><div class="ant-space-item"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">发布：<span>1天前</span></span></div><div class="ant-space-item"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">认领：<span>19小时前</span></span></div><div class="ant-space-item"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">完成：<span>--</span></span></div></div></td><td class="ant-table-cell"><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined ant-btn-sm"><span>查看应用</span></button></td></tr>
+或
+/html/body/div[2]/div/div[2]/div/div[2]/div/div[2]/div/div[2]/div
+或
+#root > div > div > div > main > section > div.css-var-_r_0_.ant-table-css-var.ant-table-wrapper.css-151uw82 > div > div > div > div > div > table > tbody > tr.ant-table-row.ant-table-row-level-0
+并点击查看应用
+元素为
+<button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined ant-btn-sm"><span>查看应用</span></button>
+等待页面加载
+找到匹配的应用名称和包名
+元素为
+<div class="ant-card-body" style="padding: 18px;"><div class="ant-space css-151uw82 ant-space-vertical css-var-_r_0_" style="gap: 12px; width: 100%;"><div class="ant-space-item"><div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;"><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="gap: 12px; min-width: 0px; flex: 1 1 0%;"><div class="ant-space-item"><div class="ant-image css-151uw82 css-var-_r_0_ ant-image-css-var" style="width: 56px; height: 56px;"><img alt="GlimraSort" class="ant-image-img css-151uw82" width="56" height="56" src="https://res.appgenie-ai.com/logo/280e8497-54c9-42fc-82e9-f1c0c005dfde/2605080152.png" style="height: 56px; border-radius: 12px; object-fit: cover; border: 1px solid rgb(240, 240, 240); background: rgb(255, 255, 255);"><div class="ant-image-cover ant-image-cover-center"></div></div></div><div class="ant-space-item"><span class="ant-typography ant-typography-ellipsis ant-typography-ellipsis-single-line css-151uw82 css-var-_r_0_" role="button" tabindex="0" style="font-size: 30px; line-height: 1.15; max-width: 340px; cursor: copy;"><strong>GlimraSort</strong></span></div></div><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="flex-wrap: wrap; gap: 6px; flex-shrink: 0; justify-content: flex-end;"><div class="ant-space-item"><span class="ant-tag ant-tag-filled ant-tag-gold css-151uw82 css-var-_r_0_">待提审</span></div></div></div></div><div class="ant-space-item"><div style="border: 1px solid rgb(240, 240, 240); border-radius: 12px; background: rgb(250, 250, 250); padding: 12px;"><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="gap: 8px; margin-bottom: 6px;"><div class="ant-space-item"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">包名</span></div><div class="ant-space-item"><span><span class="ant-tag ant-tag-filled ant-tag-orange css-151uw82 css-var-_r_0_">游戏类</span></span></div></div><div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;"><span class="ant-typography ant-typography-ellipsis ant-typography-ellipsis-single-line css-151uw82 css-var-_r_0_" role="button" tabindex="0" style="font-size: 17px; font-weight: 500; flex: 1 1 0%; min-width: 0px; cursor: copy;">com.glimrasortzxc.arcadewertyu</span><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined"><span class="ant-btn-icon"><span role="img" aria-label="copy" class="anticon anticon-copy"><svg viewBox="64 64 896 896" focusable="false" data-icon="copy" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M832 64H296c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h496v688c0 4.4 3.6 8 8 8h56c4.4 0 8-3.6 8-8V96c0-17.7-14.3-32-32-32zM704 192H192c-17.7 0-32 14.3-32 32v530.7c0 8.5 3.4 16.6 9.4 22.6l173.3 173.3c2.2 2.2 4.7 4 7.4 5.5v1.9h4.2c3.5 1.3 7.2 2 11 2H704c17.7 0 32-14.3 32-32V224c0-17.7-14.3-32-32-32zM350 856.2L263.9 770H350v86.2zM664 888H414V746c0-22.1-17.9-40-40-40H232V264h432v624z"></path></svg></span></span><span>复制</span></button></div></div></div><div class="ant-space-item"><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="flex-wrap: wrap; gap: 10px;"><div class="ant-space-item"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">编号：0518-20</span></div><span class="ant-space-item-separator"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">|</span></span><div class="ant-space-item"><span class="ant-typography ant-typography-secondary css-151uw82 css-var-_r_0_" style="font-size: 12px;">更新时间：<span>1天前</span></span></div></div></div><div class="ant-space-item"><div style="border-top: 1px solid rgb(240, 240, 240); padding-top: 12px;"><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;"><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="flex-wrap: wrap; gap: 8px;"><div class="ant-space-item"><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined"><span>详 情</span></button></div><div class="ant-space-item"><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined"><span>问题反馈</span></button></div><div class="ant-space-item"><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined"><span>更换应用</span></button></div></div><div class="ant-space css-151uw82 ant-space-horizontal ant-space-align-center css-var-_r_0_" style="flex-wrap: wrap; gap: 8px; margin-left: auto;"><div class="ant-space-item"><button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-primary ant-btn-color-primary ant-btn-variant-solid"><span>提交审核</span></button></div></div></div></div></div></div></div>
+或
+#root > div > div > div > div > div:nth-child(3) > div > div > div > div:nth-child(5) > div.ant-card-body > div
+或
+/html/body/div[2]/div/div[2]/div/div[2]/div/div[2]/div/div[2]/div
+点击该应用名称和包名下的 详情
+元素为 
+<button type="button" class="ant-btn css-151uw82 css-var-_r_0_ ant-btn-default ant-btn-color-default ant-btn-variant-outlined"><span>详 情</span></button>
+详情页为新的页面标签  需要跳到新的标签页
+等待页面加载
+再次核对应用名称和包名
+应用名称元素为
+<div class="ant-space-item"><h1 class="ant-typography css-151uw82 css-var-_r_0_" style="margin: 0px; font-size: 58px; line-height: 1.06; letter-spacing: -0.015em;">GlimraSort</h1></div>
+包名元素为
+<span class="ant-typography css-151uw82 css-var-_r_0_" style="color: rgb(21, 128, 61); font-size: 16px; cursor: copy;">com.glimrasortzxc.arcadewertyu</span>
+向下滚动页面 找到 隐私协议
+元素为
+<div class="ant-card-head-title">隐私协议</div>
+点击复制下面的文字  点击就能复制
+元素为
+//*[@id="root"]/div/div/div/div/div[3]/div/div/div/div[5]/div[2]
+或
+#root > div > div > div > div > div:nth-child(3) > div > div > div > div:nth-child(5) > div.ant-card-body > div
+回到这个页面标签
+双击
+并清空 元素为
+<input type="text" value="" id="i3" jsname="YPqjbf" class="VfPpkd-fmcmS-wGMbrd ewpfie" jsaction="focus:AHmuwe;blur:O22p3e;input:YPqjbf; mousedown:UX7yZ; mouseup:lbsD7e; pointerdown:QJflP; pointerup:HxTfMe; touchstart:p6p2H; touchend:yfqBxc;" aria-labelledby="Loading name..." pattern=".*\S.*" maxlength="10000" autocomplete="off">
+输入该组数据的应用名称 跟创建app时的应用名称一致
+然后点击 your page title
+元素为
+<h1 dir="ltr" role="presentation" class="zfr3Q duRjpb CDt4Ke " style="text-align: center;"><span data-ri="0" data-sc="15" class="C9DxTc " style="">Your page title</span></h1>
+然后点击删除按钮
+元素为
+<button class="VfPpkd-Bz112c-LgbsSe yHy1rc eT1oJ gHlGHb" jscontroller="soHxf" jsaction="click:cOuCgd; mousedown:UX7yZ; mouseup:lbsD7e; mouseenter:tfO1Yc; mouseleave:JywGue; touchstart:p6p2H; touchmove:FwuNnf; touchend:yfqBxc; touchcancel:JMtRjd; focus:AHmuwe; blur:O22p3e; contextmenu:mg9Pef;mlnRJb:fLiPzd;" data-idom-class="yHy1rc eT1oJ gHlGHb" jsname="D0Nom" aria-label="Delete header" data-tooltip-enabled="true" data-tooltip-id="tt-c106" data-tooltip-x-position="6" data-tooltip-y-position="4" tabbable="" tabindex="-1"><div jsname="s3Eaab" class="VfPpkd-Bz112c-Jh9lGc"></div><div class="VfPpkd-Bz112c-J1Ukfc-LhBDec"></div><span class="notranslate" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" focusable="false" class=" NMm5M"><path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13z"></path><path d="M9 8h2v9H9zm4 0h2v9h-2z"></path></svg></span></button>
+或
+#yDmH0d > div.MUd2qe.gJ9tsd > div.y3IDJd.CatYBe.Fx3kmc.fmzcZd > span > div > div.yiSNwd.Y9aq2d > div.bWTzgc > div > div > span > div > div.TBsoef > div > div.rZHESd > div > div > article > section > div.LS81yb.gxM05b.TZTnI.j5pSsc.IKVHqc.Iif4nf.yaqOZd.cJgDec.nyKByd.LB7kq.O13XJf > div:nth-child(2) > div.VymC1c.zWtvPd.siiXfe.liMuUb > div > span > button
+然后点击空白处 将隐私协议粘贴到这里
+元素为
+<article class="UynGwb AM7Rx UtePc Wtp4J" guidedhelpid="at-canvas" aria-labelledby="D8lMef" style="min-height: calc(100vh - 6rem + 0px);"></article>
+粘贴后点击 publish
+元素为
+<div role="button" class="uArJ5e UQuaGc kCyAyd l3F1ye MBjXNe" jscontroller="VXdfxd" jsaction="click:cOuCgd; mousedown:UX7yZ; mouseup:lbsD7e; mouseenter:tfO1Yc; mouseleave:JywGue;touchstart:p6p2H; touchmove:FwuNnf; touchend:yfqBxc(preventDefault=true); touchcancel:JMtRjd;focus:AHmuwe; blur:O22p3e; contextmenu:mg9Pef;" jsshadow="" jsname="RgZmSc" tabindex="0" guidedhelpid="at-appbar-publish" data-tooltip="Publish"><div class="Fvio9d MbhUzd" jsname="ksKsZd"></div><div class="e19J0b CeoRYc"></div><span jsslot="" class="l4V7wb Fxmcue"><span class="NPEfkd RveJvd snByac">Publish</span></span></div>
+或
+#ow11 > div.uArJ5e.UQuaGc.kCyAyd.l3F1ye.MBjXNe
+等待弹窗打开
+点击web address 输入框
+输入 应用名称+1-9随机数组合 
+组合随机两位到三位数字
+例：abc12,abc123
+元素为
+<input type="text" class="poFWNe zHQkBf" jsname="YPqjbf" autocomplete="off" tabindex="0" aria-labelledby="D43T4b" autofocus="" maxlength="31" data-initial-value="">
+输入完成后检测是否通过  通过就下一步  不通过就重新输入一遍
+元素为
+<span class="DPvwYc yfzDSb" aria-hidden="true" jsname="sZ0DBc" style=""><svg width="24" height="24" viewBox="0 0 24 24" focusable="false" class=" NMm5M"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"></path><path d="M10 14.2l-2.6-2.6L6 13l4 4 8-8-1.4-1.4z"></path></svg></span>
+通过就点击publish
+元素为
+<div role="button" class="uArJ5e UQuaGc Y5sE8d ARrCac HvOprf l2Unrf QkiPgd" jscontroller="VXdfxd" jsaction="click:cOuCgd; mousedown:UX7yZ; mouseup:lbsD7e; mouseenter:tfO1Yc; mouseleave:JywGue;touchstart:p6p2H; touchmove:FwuNnf; touchend:yfqBxc(preventDefault=true); touchcancel:JMtRjd;focus:AHmuwe; blur:O22p3e; contextmenu:mg9Pef;" jsshadow="" jsname="LgbsSe" tabindex="0" data-id="j6LnYe" autofocus=""><div class="Fvio9d MbhUzd" jsname="ksKsZd"></div><div class="e19J0b CeoRYc"></div><span jsslot="" class="l4V7wb Fxmcue"><span class="NPEfkd RveJvd snByac">Publish</span></span></div>
+或
+#yDmH0d > div.NBxL9e.iWO5td > div > div.I7OXgf.B6r3ub.JKIKje.ZEeHrd.Inn9w.iWO5td > div.OE6hId.J9fJmf > div.uArJ5e.UQuaGc.Y5sE8d.ARrCac.HvOprf.l2Unrf.QkiPgd
+等待发布完成
+然后点击复制链接
+元素为
+<button class="VfPpkd-Bz112c-LgbsSe yHy1rc eT1oJ mN1ivc rGgdw" jscontroller="soHxf" jsaction="click:cOuCgd; mousedown:UX7yZ; mouseup:lbsD7e; mouseenter:tfO1Yc; mouseleave:JywGue; touchstart:p6p2H; touchmove:FwuNnf; touchend:yfqBxc; touchcancel:JMtRjd; focus:AHmuwe; blur:O22p3e; contextmenu:mg9Pef;mlnRJb:fLiPzd;" data-idom-class="yHy1rc eT1oJ mN1ivc rGgdw" jsname="Xcfh5" aria-label="Can't copy link for unpublished site" data-tooltip-enabled="true" data-tooltip-id="tt-i15" id="ilet4c"><div jsname="s3Eaab" class="VfPpkd-Bz112c-Jh9lGc"></div><div class="VfPpkd-Bz112c-J1Ukfc-LhBDec"></div><span class="notranslate  odraff" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" focusable="false" class=" NMm5M"><path d="M17 7h-4v2h4c1.65 0 3 1.35 3 3s-1.35 3-3 3h-4v2h4c2.76 0 5-2.24 5-5s-2.24-5-5-5zm-6 8H7c-1.65 0-3-1.35-3-3s1.35-3 3-3h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-2z"></path><path d="M8 11h8v2H8z"></path></svg></span></button>
+或
+#ilet4c
+等待出弹窗
+点击 copy link 进行复制
+元素为
+<div role="button" class="U26fgb O0WRkf oG5Srb C0oVfc zZEui M9Bg4d" jscontroller="VXdfxd" jsaction="click:cOuCgd; mousedown:UX7yZ; mouseup:lbsD7e; mouseenter:tfO1Yc; mouseleave:JywGue; focus:AHmuwe; blur:O22p3e; contextmenu:mg9Pef;touchstart:p6p2H; touchmove:FwuNnf; touchend:yfqBxc(preventDefault=true); touchcancel:JMtRjd;" jsshadow="" jsname="lmPqlf" aria-label="Copy link. https://sites.google.com/view/nexoslide1/home" aria-disabled="false" tabindex="0"><div class="Vwe4Vb MbhUzd" jsname="ksKsZd"></div><div class="ZFr60d CeoRYc"></div><span jsslot="" class="CwaK9"><span class="RveJvd snByac">Copy link</span></span></div>
+或
+#yDmH0d > div.llhEMd.iWO5td > div > div.g3VIld.OGkBRd.Up8vH.hFEqNb.J9Nfi.iWO5td > span > div > div.G16aMe > div > div.U26fgb.O0WRkf.oG5Srb.C0oVfc.zZEui.M9Bg4d
+等待一会
+然后点击左上角图标
+元素为
+<span data-is-tooltip-wrapper="true"><button class="VfPpkd-Bz112c-LgbsSe yHy1rc eT1oJ mN1ivc IRAprc" jscontroller="soHxf" jsaction="click:cOuCgd; mousedown:UX7yZ; mouseup:lbsD7e; mouseenter:tfO1Yc; mouseleave:JywGue; touchstart:p6p2H; touchmove:FwuNnf; touchend:yfqBxc; touchcancel:JMtRjd; focus:AHmuwe; blur:O22p3e; contextmenu:mg9Pef;mlnRJb:fLiPzd;" data-idom-class="yHy1rc eT1oJ mN1ivc IRAprc" jsname="Jdi7r" aria-label="Sites home" data-tooltip-enabled="true" data-tooltip-id="tt-i1"><div jsname="s3Eaab" class="VfPpkd-Bz112c-Jh9lGc"></div><div class="VfPpkd-Bz112c-J1Ukfc-LhBDec"></div><img class="KpddBc" src="//fonts.gstatic.com/s/i/productlogos/sites_2020q4/v3/web-48dp/logo_sites_2020q4_color_2x_web_48dp.png" alt="Atari logo"></button><div class="EY8ABd-OWXEXe-TAWMXe" id="tt-i1" role="tooltip" aria-hidden="true">Sites home</div></span>
+或
+#ow15 > div > span
+然后回到最开始的标签页
+点击这个输入框 粘贴刚刚复制的值到这个输入框
+点击save
+元素为<button class="mdc-button overflowable-button mdc-button--unelevated" debug-id="main-button" disabled=""><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><!----><span class="mdc-button__label">Save</span><!----></button>
+等待保存成功提示
+然后点击app content 进行返回
+元素为
+<div class="_ngcontent-vua-25 grand-child-level highlighted current" role="listitem" aria-label="App content" aria-current="true"><a buttondecorator="" class="item-link _ngcontent-vua-25" tabindex="0" role="button" aria-disabled="false" href="/console/u/0/developers/5719511147760424406/app/4974952150895677173/app-content/overview"><!----><material-icon class="non-objective-expand-icon _nghost-vua-11 _ngcontent-vua-25 hidden"><i class="material-icon-i material-icons-extended _ngcontent-vua-11" role="img" aria-hidden="true">arrow_drop_down</i></material-icon><!----><span class="item-label _ngcontent-vua-25">App content</span><!----></a><!----></div>
+以上为第8项
+下面是第九项
+找到Content ratings下的Start declaration 按钮并点击
+元素为
+<button class="mdc-button mdc-button--unelevated _ngcontent-njf-55" debug-id="manage-declaration-cta" aria-label="Start Privacy policy declaration"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><span class="mdc-button__label _ngcontent-njf-55">Start declaration</span></button>
+等待一下页面加载
+点击 start questionnaire
+元素为
+<button class="mdc-button mdc-button--unelevated _ngcontent-njf-60" debug-id="get-started-start-button" welcome-screen-action-item=""><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><span class="mdc-button__label _ngcontent-njf-60">Start questionnaire</span></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-njf-0 > div > div.page-container._ngcontent-njf-0 > page-router-outlet > page-wrapper > div > app-content-rating-overview-page > console-page-header > console-block-1-column > div > div > get-started > div > div.content._ngcontent-njf-28 > div > console-button-set > div.children._ngcontent-njf-25 > button
+等待页面加载
+选中email address输入框 输入用户一开始填写的邮箱
+元素为
+<input class="mdc-text-field__input _ngcontent-njf-40" debugid="acx_264709916" focusableelement="" type="email" aria-controls="aAE19A9ED-DD25-49ED-9FF1-E59F39D2FC81--0" aria-describedby="aAE19A9ED-DD25-49ED-9FF1-E59F39D2FC81--0" aria-invalid="true" aria-readonly="false">
+或
+#aCB7B5151-D7AE-42EB-AC68-BA5A09547F43--14 > app-category-step > console-section > div > div > console-block-1-column > div > div > console-form-row:nth-child(1) > div > div.console-form-row-content._ngcontent-njf-66 > div.console-form-row-content-container._ngcontent-njf-66 > material-input > label > input
+勾选 All other App Types  和  terms and conditions 框
+All other App Types 框元素为
+<input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--306" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--6">
+terms and conditions 框元素为
+<input class="mdc-checkbox__native-control _ngcontent-njf-67" focusableelement="" type="checkbox" role="checkbox" aria-labelledby="aDCC960C1-4CF4-4C94-9231-8E751526F102--303" tabindex="0" aria-readonly="false">
+输入完成后点击next
+元素为
+<button class="mdc-button overflowable-button mdc-button--unelevated" aria-label="Next" debug-id="next-button"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><!----><span class="mdc-button__label">Next</span><!----></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-njf-0 > div > div.page-container._ngcontent-njf-0 > page-router-outlet > page-wrapper > div > app-content-rating-iarc-questionnaire-page > console-form > fill-questionnaire-flow > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-njf-63 > console-button-set > div.permanent-items.first-group._ngcontent-njf-25.last-group > overflowable-item > button
+等待页面加载
+会有九个框需要选中 都选NO
+点了一个框才能处出现下一个框
+第一个框
+Downloaded APP 选中no
+元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--313" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--7"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--307 > div > div > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+检测当前项是否出现 Completed  出现就继续下一步
+元素为
+<div><!----><icon-text debug-id="completed-category-icon-text" issmallicon="" class="_nghost-njf-72" aria-live="polite" aria-label="Completed category Downloaded App"><!----><console-icon class="leading-icon _nghost-njf-21 _ngcontent-njf-72" debug-id="leading-icon"><material-icon clickabletooltiptarget="" class="_ngcontent-njf-21 _nghost-njf-11" aria-live="off" aria-hidden="true" size="large" tabindex="-1" style="color: rgb(26, 134, 58);"><i class="material-icon-i material-icons-extended _ngcontent-njf-11" role="img" aria-hidden="true">check_circle</i></material-icon><!----></console-icon><!----><!----><!----><!----><!----><!----><simple-html class="text-line _nghost-njf-29 _ngcontent-njf-72" tooltiptarget=""><span class="simple-html-contents _ngcontent-njf-29">Completed</span></simple-html><!----></icon-text></div>
+或
+#aCB7B5151-D7AE-42EB-AC68-BA5A09547F43--15 > questionnaire-step > console-block-1-column:nth-child(2) > div > div > console-flex-wrapper > div > div:nth-child(2)
+第二个框 User ContentSharing
+元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--315" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--8"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--308 > div > div > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+检测当前项是否出现 Completed  出现就继续下一步
+元素为
+<div><!----><icon-text debug-id="completed-category-icon-text" issmallicon="" class="_nghost-njf-72" aria-live="polite" aria-label="Completed category User Content Sharing"><!----><console-icon class="leading-icon _nghost-njf-21 _ngcontent-njf-72" debug-id="leading-icon"><material-icon clickabletooltiptarget="" class="_ngcontent-njf-21 _nghost-njf-11" aria-live="off" aria-hidden="true" size="large" tabindex="-1" style="color: rgb(26, 134, 58);"><i class="material-icon-i material-icons-extended _ngcontent-njf-11" role="img" aria-hidden="true">check_circle</i></material-icon><!----></console-icon><!----><!----><!----><!----><!----><!----><simple-html class="text-line _nghost-njf-29 _ngcontent-njf-72" tooltiptarget=""><span class="simple-html-contents _ngcontent-njf-29">Completed</span></simple-html><!----></icon-text></div>
+或
+#aCB7B5151-D7AE-42EB-AC68-BA5A09547F43--15 > questionnaire-step > console-block-1-column:nth-child(3) > div > div > console-flex-wrapper > div > div:nth-child(2)
+第三个框 Online Content
+元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--317" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--9"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--309 > div > div > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+检测当前项是否出现 Completed  出现就继续下一步
+元素为
+<div><!----><icon-text debug-id="completed-category-icon-text" issmallicon="" class="_nghost-njf-72" aria-live="polite" aria-label="Completed category Online Content"><!----><console-icon class="leading-icon _nghost-njf-21 _ngcontent-njf-72" debug-id="leading-icon"><material-icon clickabletooltiptarget="" class="_ngcontent-njf-21 _nghost-njf-11" aria-live="off" aria-hidden="true" size="large" tabindex="-1" style="color: rgb(26, 134, 58);"><i class="material-icon-i material-icons-extended _ngcontent-njf-11" role="img" aria-hidden="true">check_circle</i></material-icon><!----></console-icon><!----><!----><!----><!----><!----><!----><simple-html class="text-line _nghost-njf-29 _ngcontent-njf-72" tooltiptarget=""><span class="simple-html-contents _ngcontent-njf-29">Completed</span></simple-html><!----></icon-text></div>
+或
+#aCB7B5151-D7AE-42EB-AC68-BA5A09547F43--15 > questionnaire-step > console-block-1-column:nth-child(4) > div > div > console-flex-wrapper > div > div:nth-child(2)
+第四个框 Promotion or Sale of Age-Restricted Products or Activities
+元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--319" aria-checked="true" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--10"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--310 > div > div > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+检测当前项是否出现 Completed  出现就继续下一步
+元素为
+<div><!----><icon-text debug-id="completed-category-icon-text" issmallicon="" class="_nghost-njf-72" aria-live="polite" aria-label="Completed category Promotion or Sale of Age-Restricted Products or Activities"><!----><console-icon class="leading-icon _nghost-njf-21 _ngcontent-njf-72" debug-id="leading-icon"><material-icon clickabletooltiptarget="" class="_ngcontent-njf-21 _nghost-njf-11" aria-live="off" aria-hidden="true" size="large" tabindex="-1" style="color: rgb(26, 134, 58);"><i class="material-icon-i material-icons-extended _ngcontent-njf-11" role="img" aria-hidden="true">check_circle</i></material-icon><!----></console-icon><!----><!----><!----><!----><!----><!----><simple-html class="text-line _nghost-njf-29 _ngcontent-njf-72" tooltiptarget=""><span class="simple-html-contents _ngcontent-njf-29">Completed</span></simple-html><!----></icon-text></div>
+或
+#aCB7B5151-D7AE-42EB-AC68-BA5A09547F43--15 > questionnaire-step > console-block-1-column:nth-child(5) > div > div > console-flex-wrapper > div > div:nth-child(2)
+如果找不到就像下滚动页面
+下面是Miscellaneous的五个选中框  没有Completed 不需要检测  
+第一个框
+元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--321" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--11"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--311 > div > div:nth-child(1) > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+第二个框元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--323" aria-checked="true" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--12"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--311 > div > div:nth-child(2) > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+第三个框元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--325" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--13"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--311 > div > div:nth-child(3) > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+第四个框元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--327" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--14"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--311 > div > div:nth-child(4) > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+第五个框元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-njf-68"><input class="mdc-radio__native-control _ngcontent-njf-68" role="radio" type="radio" id="aDCC960C1-4CF4-4C94-9231-8E751526F102--329" aria-checked="false" aria-disabled="false" name="radio-group-aC9149152-46AC-4E85-989D-B50CCBC7D5F7--15"><div class="mdc-radio__background _ngcontent-njf-68"><div class="mdc-radio__outer-circle _ngcontent-njf-68"></div><div class="mdc-radio__inner-circle _ngcontent-njf-68"></div></div><div class="mdc-radio__ripple _ngcontent-njf-68"></div><div class="mdc-radio__focus-ring _ngcontent-njf-68"></div></div>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--311 > div > div:nth-child(5) > question > console-block-1-column:nth-child(2) > div > div > material-radio-group > material-radio:nth-child(2) > div.mdc-radio.mdc-radio--touch._ngcontent-njf-68
+等待3秒
+点击保存 save
+元素为
+<button class="mdc-button overflowable-button mdc-button--text pc-text-tertiary" aria-label="Save" debug-id="save-button" disabled=""><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"><div class="__acx-ripple" style="top: -117px; left: -100.547px; transform: translate(4.54688px, 9px) scale(0.372937);"></div></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><!----><span class="mdc-button__label">Save</span><!----></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-njf-0 > div > div.page-container._ngcontent-njf-0 > page-router-outlet > page-wrapper > div > app-content-rating-iarc-questionnaire-page > console-form > fill-questionnaire-flow > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-njf-63 > console-button-set > div.overflowable-items._ngcontent-njf-25.last-group > overflowable-item:nth-child(1) > button
+等待保存提示 保存完成
+<span aria-live="polite" class="message margin-right _ngcontent-njf-63">Your changes have been saved</span>
+点击下一步 next
+元素为
+<button class="mdc-button overflowable-button mdc-button--unelevated" aria-label="Next" debug-id="next-button"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><!----><span class="mdc-button__label">Next</span><!----></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-njf-0 > div > div.page-container._ngcontent-njf-0 > page-router-outlet > page-wrapper > div > app-content-rating-iarc-questionnaire-page > console-form > fill-questionnaire-flow > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-njf-63 > console-button-set > div.permanent-items.first-group._ngcontent-njf-25 > overflowable-item > button
+等待一下页面加载
+点击save
+元素为
+<button class="mdc-button overflowable-button mdc-button--unelevated" debug-id="main-button"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><!----><span class="mdc-button__label">Save</span><!----></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-njf-0 > div > div.page-container._ngcontent-njf-0 > page-router-outlet > page-wrapper > div > app-content-rating-iarc-questionnaire-page > console-form > fill-questionnaire-flow > publishing-bottom-bar > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-njf-63 > console-button-set > div.permanent-items.first-group._ngcontent-njf-25.last-group > overflowable-item:nth-child(2) > button
+到这里这一步就完成了
+下一步
+点击App content 元素为
+<a buttondecorator="" class="item-link _ngcontent-njf-20" tabindex="0" role="button" aria-disabled="false" href="/console/u/0/developers/5719511147760424406/app/4974780274037977086/app-content/overview"><!----><material-icon class="non-objective-expand-icon _nghost-njf-11 _ngcontent-njf-20 hidden"><i class="material-icon-i material-icons-extended _ngcontent-njf-11" role="img" aria-hidden="true">arrow_drop_down</i></material-icon><!----><span class="item-label _ngcontent-njf-20">App content</span><!----></a>
+或
+#aDCC960C1-4CF4-4C94-9231-8E751526F102--108 > div > navigation-item:nth-child(2) > div > a
+等待页面加载
+下面是第10项
+点击Data safety 下的start declaration
+元素为
+<button class="mdc-button mdc-button--unelevated _ngcontent-xpv-47" debug-id="manage-declaration-cta" aria-label="Start Data safety declaration"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><span class="mdc-button__label _ngcontent-xpv-47">Start declaration</span></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-xpv-0 > div > div.page-container._ngcontent-xpv-0 > page-router-outlet > page-wrapper > div > app-content-overview-page > console-block-1-column > div > div > console-section > div > div > div > to-do-policies-list > div:nth-child(2) > div > policy-summary > console-section > div > div > console-block-1-column:nth-child(2) > div > div > console-button-set > div > button
+等待页面加载
+点next
+元素为
+<button class="mdc-button mdc-button--unelevated" debug-id="button-next"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><span class="mdc-button__label">Next</span></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-xpv-0 > div > div.page-container._ngcontent-xpv-0 > page-router-outlet > page-wrapper > div > app-content-play-safety-labels-page > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-xpv-76 > console-button-set > div.children._ngcontent-xpv-19 > button
+等待页面加载
+点击no 选择框
+元素为
+<div class="mdc-radio mdc-radio--touch _ngcontent-xpv-88"><input class="mdc-radio__native-control _ngcontent-xpv-88" role="radio" type="radio" id="aE416BE30-63C8-4C8F-911B-E3B7A0D7449A--126" aria-checked="false" aria-disabled="false" name="radio-group-aDDA82B6E-8FE8-4D33-80EC-FA3F781E0D94--3"><div class="mdc-radio__background _ngcontent-xpv-88"><div class="mdc-radio__outer-circle _ngcontent-xpv-88"></div><div class="mdc-radio__inner-circle _ngcontent-xpv-88"></div></div><div class="mdc-radio__ripple _ngcontent-xpv-88"></div><div class="mdc-radio__focus-ring _ngcontent-xpv-88"></div></div>
+或
+#aFCA46B07-00C9-4166-AA0E-9230294582F2--4 > step-data-collection > console-section > div > div > console-block-1-column > div > div > console-form-row:nth-child(2) > div > div > div.console-form-row-content-container._ngcontent-xpv-67 > material-radio-group:nth-child(4) > material-radio > div.mdc-radio.mdc-radio--touch._ngcontent-xpv-88
+然后点next
+元素为
+<button class="mdc-button mdc-button--unelevated" debug-id="button-next"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"><div class="__acx-ripple" style="top: -106px; left: -71.5469px; transform: translate(-17.2266px, -2px) scale(0.422117);"></div></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><span class="mdc-button__label">Next</span></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-xpv-0 > div > div.page-container._ngcontent-xpv-0 > page-router-outlet > page-wrapper > div > app-content-play-safety-labels-page > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-xpv-76 > console-button-set > div.children._ngcontent-xpv-19 > button
+等待加载
+点击保存
+元素为
+<button class="mdc-button overflowable-button mdc-button--unelevated" debug-id="main-button"><material-ripple aria-hidden="true" programmatic="" class="mdc-button__ripple"></material-ripple><div class="mdc-button__focus-ring"></div><div class="mdc-button__touch"></div><!----><span class="mdc-button__label">Save</span><!----></button>
+或
+#main-content > div.content-holder-wrapper._ngcontent-doe-0 > div > div.page-container._ngcontent-doe-0 > page-router-outlet > page-wrapper > div > app-content-play-safety-labels-page > publishing-bottom-bar > form-bottom-bar > bottom-bar-base > div > div > div > div.button-container.gm3-button._ngcontent-doe-72 > console-button-set > div.overflowable-items._ngcontent-doe-19.last-group > overflowable-item:nth-child(3) > button
+等待出现保存成功提示
+元素为
+<span aria-live="polite" class="message margin-right _ngcontent-doe-72">Change saved. Send for review in Publishing overview.</span>
+或
+#main-content > div.content-holder-wrapper._ngcontent-doe-0 > div > div.page-container._ngcontent-doe-0 > page-router-outlet > page-wrapper > div > app-content-play-safety-labels-page > publishing-bottom-bar > form-bottom-bar > bottom-bar-base > div > div > div > div.content._ngcontent-doe-72 > span
+到这里第十项完成
+点击 app content 
+<a buttondecorator="" class="item-link _ngcontent-doe-25" tabindex="0" role="button" aria-disabled="false" href="/console/u/0/developers/5719511147760424406/app/4974952150895677173/app-content/overview"><!----><material-icon class="non-objective-expand-icon _nghost-doe-11 _ngcontent-doe-25 hidden"><i class="material-icon-i material-icons-extended _ngcontent-doe-11" role="img" aria-hidden="true">arrow_drop_down</i></material-icon><!----><span class="item-label _ngcontent-doe-25">App content</span><!----></a>
