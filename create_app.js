@@ -950,10 +950,10 @@ async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
 
 async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
     const loggedInIndicators = [
-        'span.ant-menu-title-content:has-text("我的任务")',
-        'span.ant-menu-title-content:has-text("任务池")',
-        'button:has-text("退出")',
-        'tr.ant-table-row'
+        'li[data-menu-id*="/my-submit-tasks"]',
+        'li[data-menu-id*="/submit-tasks"]',
+        'button:has-text("??")',
+        'button:has-text("Logout")'
     ];
     for (const selector of loggedInIndicators) {
         const visible = await appGeniePage.locator(selector).first().isVisible().catch(() => false);
@@ -973,14 +973,56 @@ async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
     console.log('[STEP] AppGenie login required, filling web_username/web_password...');
     await retryAction(async () => {
         await accountInput.waitFor({ state: 'visible', timeout: 30000 });
-        await accountInput.fill(runtimeOptions.webUsername);
-        await passwordInput.fill(runtimeOptions.webPassword);
+        await accountInput.click({ timeout: 10000 });
+        await accountInput.fill('');
+        await accountInput.type(runtimeOptions.webUsername, { delay: 90 });
+        await delay(appGeniePage, 900 + Math.floor(Math.random() * 700));
+
+        await passwordInput.click({ timeout: 10000 });
+        await passwordInput.fill('');
+        await passwordInput.type(runtimeOptions.webPassword, { delay: 90 });
+        await delay(appGeniePage, 900 + Math.floor(Math.random() * 700));
+
         const loginBtn = appGeniePage.locator('button[type="submit"], button.ant-btn-primary').first();
         await loginBtn.click({ timeout: 10000 });
+        await delay(appGeniePage, 2200 + Math.floor(Math.random() * 1200));
     }, 'AppGenie login submit', 3);
 
     await appGeniePage.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+    await retryAction(async () => {
+        const onSubmitTasks = /\/(?:my-submit-tasks|submit-tasks)(?:[/?#]|$)/i.test(appGeniePage.url() || '');
+        const myTasksVisible = await appGeniePage.locator('li[data-menu-id*="/my-submit-tasks"]').first().isVisible().catch(() => false);
+        const taskPoolVisible = await appGeniePage.locator('li[data-menu-id*="/submit-tasks"]').first().isVisible().catch(() => false);
+        if (!onSubmitTasks && !myTasksVisible && !taskPoolVisible) {
+            throw new Error('AppGenie did not reach task page after login yet.');
+        }
+    }, 'Wait AppGenie task page after login', 4);
     await delay(appGeniePage, 3000);
+}
+
+async function ensureAppGenieOnMyTasks(appGeniePage) {
+    const myTasksMenu = appGeniePage.locator(
+        'li[data-menu-id*="/my-submit-tasks"], [role="menuitem"][data-menu-id*="/my-submit-tasks"], li.ant-menu-item:has(.ant-menu-title-content:has-text("My tasks")), [role="menuitem"]:has-text("My tasks")'
+    ).first();
+
+    await retryAction(async () => {
+        await myTasksMenu.waitFor({ state: 'visible', timeout: 60000 });
+
+        const isSelected = await myTasksMenu.evaluate(el => String(el.className || '').includes('ant-menu-item-selected')).catch(() => false);
+        if (!isSelected) {
+            await myTasksMenu.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+            await myTasksMenu.click({ timeout: 10000 });
+            await delay(appGeniePage, 2200);
+        }
+
+        const selectedNow = await myTasksMenu.evaluate(el => String(el.className || '').includes('ant-menu-item-selected')).catch(() => false);
+        const onMyTasksUrl = /\/my-submit-tasks(?:[/?#]|$)/i.test(appGeniePage.url() || '');
+        if (!selectedNow && !onMyTasksUrl) {
+            throw new Error('My tasks page is not active yet.');
+        }
+    }, 'Open AppGenie my tasks', 3);
+
+    await delay(appGeniePage, 1800);
 }
 
 async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions) {
@@ -996,16 +1038,21 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     await delay(appGeniePage, 3000);
     await ensureAppGenieLoggedIn(appGeniePage, runtimeOptions);
 
-    const myTaskMenu = appGeniePage.locator('span.ant-menu-title-content').filter({
-        hasText: /我的任务|My tasks/i
-    }).first();
-    if (await myTaskMenu.isVisible().catch(() => false)) {
-        await myTaskMenu.click({ timeout: 10000 }).catch(() => { });
-        await delay(appGeniePage, 2500);
-    }
+    await ensureAppGenieOnMyTasks(appGeniePage);
 
     const rows = appGeniePage.locator('tr.ant-table-row');
-    await rows.first().waitFor({ state: 'visible', timeout: 60000 });
+    const emptyRowsHint = appGeniePage.locator('.ant-table-placeholder, .ant-empty, .ant-empty-description, text=/No data|No tasks/i').first();
+    await retryAction(async () => {
+        const hasVisibleRow = await rows.first().isVisible().catch(() => false);
+        if (hasVisibleRow) return;
+
+        const hasEmptyHint = await emptyRowsHint.isVisible().catch(() => false);
+        if (hasEmptyHint) {
+            throw new Error('No rows found in AppGenie "My tasks".');
+        }
+
+        throw new Error('Waiting AppGenie task rows...');
+    }, 'Wait AppGenie my tasks rows', 4);
 
     let emailRow = rows.filter({ hasText: runtimeOptions.contactEmail }).first();
     if (!(await emailRow.isVisible().catch(() => false))) {
