@@ -149,7 +149,7 @@ Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "应用创建启动器"
 $form.StartPosition = "CenterScreen"
-$form.Size = New-Object System.Drawing.Size(760, 280)
+$form.Size = New-Object System.Drawing.Size(760, 440)
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
@@ -189,15 +189,49 @@ $btnBrowse.Location = New-Object System.Drawing.Point(624, 134)
 $btnBrowse.Size = New-Object System.Drawing.Size(100, 28)
 $form.Controls.Add($btnBrowse)
 
+$labelWebUser = New-Object System.Windows.Forms.Label
+$labelWebUser.Text = "网页账号（web_username）"
+$labelWebUser.Location = New-Object System.Drawing.Point(24, 172)
+$labelWebUser.Size = New-Object System.Drawing.Size(220, 20)
+$form.Controls.Add($labelWebUser)
+
+$txtWebUser = New-Object System.Windows.Forms.TextBox
+$txtWebUser.Location = New-Object System.Drawing.Point(24, 194)
+$txtWebUser.Size = New-Object System.Drawing.Size(700, 24)
+$form.Controls.Add($txtWebUser)
+
+$labelWebPass = New-Object System.Windows.Forms.Label
+$labelWebPass.Text = "网页密码（web_password）"
+$labelWebPass.Location = New-Object System.Drawing.Point(24, 230)
+$labelWebPass.Size = New-Object System.Drawing.Size(220, 20)
+$form.Controls.Add($labelWebPass)
+
+$txtWebPass = New-Object System.Windows.Forms.TextBox
+$txtWebPass.Location = New-Object System.Drawing.Point(24, 252)
+$txtWebPass.Size = New-Object System.Drawing.Size(700, 24)
+$txtWebPass.UseSystemPasswordChar = $true
+$form.Controls.Add($txtWebPass)
+
+$labelContactEmail = New-Object System.Windows.Forms.Label
+$labelContactEmail.Text = "联系邮箱（contact_email）"
+$labelContactEmail.Location = New-Object System.Drawing.Point(24, 288)
+$labelContactEmail.Size = New-Object System.Drawing.Size(220, 20)
+$form.Controls.Add($labelContactEmail)
+
+$txtContactEmail = New-Object System.Windows.Forms.TextBox
+$txtContactEmail.Location = New-Object System.Drawing.Point(24, 310)
+$txtContactEmail.Size = New-Object System.Drawing.Size(700, 24)
+$form.Controls.Add($txtContactEmail)
+
 $btnStart = New-Object System.Windows.Forms.Button
 $btnStart.Text = "开始运行"
-$btnStart.Location = New-Object System.Drawing.Point(544, 186)
+$btnStart.Location = New-Object System.Drawing.Point(544, 350)
 $btnStart.Size = New-Object System.Drawing.Size(85, 30)
 $form.Controls.Add($btnStart)
 
 $btnCancel = New-Object System.Windows.Forms.Button
 $btnCancel.Text = "取消"
-$btnCancel.Location = New-Object System.Drawing.Point(639, 186)
+$btnCancel.Location = New-Object System.Drawing.Point(639, 350)
 $btnCancel.Size = New-Object System.Drawing.Size(85, 30)
 $form.Controls.Add($btnCancel)
 
@@ -208,6 +242,9 @@ $openFileDialog.Title = "选择数据文件（Excel/CSV）"
 
 $selectedDeveloperUrl = $null
 $selectedExcelPath = $null
+$selectedWebUsername = $null
+$selectedWebPassword = $null
+$selectedContactEmail = $null
 $startRequested = $false
 
 $btnBrowse.Add_Click({
@@ -250,8 +287,29 @@ $btnStart.Add_Click({
             throw "数据文件必须是 .xlsx / .xls / .csv 格式。"
         }
 
+        $webUsername = $txtWebUser.Text.Trim()
+        if (-not $webUsername) {
+            throw "请填写网页账号（web_username）。"
+        }
+
+        $webPassword = $txtWebPass.Text
+        if ([string]::IsNullOrWhiteSpace($webPassword)) {
+            throw "请填写网页密码（web_password）。"
+        }
+
+        $contactEmail = $txtContactEmail.Text.Trim()
+        if (-not $contactEmail) {
+            throw "请填写联系邮箱（contact_email）。"
+        }
+        if ($contactEmail -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
+            throw "联系邮箱格式不正确。"
+        }
+
         $script:selectedDeveloperUrl = $devUrl
         $script:selectedExcelPath = $excelPath
+        $script:selectedWebUsername = $webUsername
+        $script:selectedWebPassword = $webPassword
+        $script:selectedContactEmail = $contactEmail
         $script:startRequested = $true
         $form.Close()
     }
@@ -273,6 +331,9 @@ if (Test-Path $runSummaryPath -PathType Leaf) {
     Remove-Item -Path $runSummaryPath -Force -ErrorAction SilentlyContinue
 }
 $env:APP_CREATE_RUN_SUMMARY_PATH = $runSummaryPath
+$env:APP_CREATE_WEB_USERNAME = $selectedWebUsername
+$env:APP_CREATE_WEB_PASSWORD = $selectedWebPassword
+$env:APP_CREATE_CONTACT_EMAIL = $selectedContactEmail
 
 $args = @(
     "-NoProfile",

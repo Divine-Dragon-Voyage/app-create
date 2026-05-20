@@ -29,6 +29,9 @@ const LOGIN_WAIT_SECONDS_ENV = 'APP_CREATE_LOGIN_WAIT_SECONDS';
 const DEVELOPER_URL_ENV = 'APP_CREATE_DEVELOPER_URL';
 const DEVELOPER_ID_ENV = 'APP_CREATE_DEVELOPER_ID';
 const RUN_SUMMARY_PATH_ENV = 'APP_CREATE_RUN_SUMMARY_PATH';
+const WEB_USERNAME_ENV = 'APP_CREATE_WEB_USERNAME';
+const WEB_PASSWORD_ENV = 'APP_CREATE_WEB_PASSWORD';
+const CONTACT_EMAIL_ENV = 'APP_CREATE_CONTACT_EMAIL';
 const DEFAULT_LOGIN_WAIT_SECONDS = 900;
 const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
 const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\u5ea6', '\u6b65\u9aa4']);
@@ -44,6 +47,9 @@ const PROGRESS_STEP_GOV_DONE = 'GOV_DONE';
 const PROGRESS_STEP_FINANCE_DONE = 'FINANCE_DONE';
 const PROGRESS_STEP_HEALTH_DONE = 'HEALTH_DONE';
 const PROGRESS_STEP_COUNTRY_DONE = 'COUNTRY_DONE';
+const PROGRESS_STEP_PRIVACY_DONE = 'PRIVACY_DONE';
+const PROGRESS_STEP_RATING_DONE = 'RATING_DONE';
+const PROGRESS_STEP_SAFETY_DONE = 'SAFETY_DONE';
 const PROGRESS_STEP_DONE = 'DONE';
 const PROGRESS_STEP_ORDER = [
     PROGRESS_STEP_APP_CREATED,
@@ -55,6 +61,9 @@ const PROGRESS_STEP_ORDER = [
     PROGRESS_STEP_FINANCE_DONE,
     PROGRESS_STEP_HEALTH_DONE,
     PROGRESS_STEP_COUNTRY_DONE,
+    PROGRESS_STEP_PRIVACY_DONE,
+    PROGRESS_STEP_RATING_DONE,
+    PROGRESS_STEP_SAFETY_DONE,
     PROGRESS_STEP_DONE
 ];
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
@@ -558,7 +567,7 @@ function createNoopStatusManager() {
     };
 }
 
-function loadTasksFromExcel(filePath) {
+function loadTasksFromExcel(filePath, sourceFilePath = filePath) {
     const workbook = XLSX.readFile(filePath);
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) {
@@ -576,6 +585,10 @@ function loadTasksFromExcel(filePath) {
     const headers = [];
     let appNameColumnIndex = -1;
     let packageNameColumnIndex = -1;
+    let statusColumnIndex = -1;
+    let progressColumnIndex = -1;
+    const sourceExt = path.extname(String(sourceFilePath || filePath)).toLowerCase();
+    const isCsvSource = sourceExt === '.csv';
 
     for (let c = range.s.c; c <= range.e.c; c++) {
         const headerValue = getCellText(sheet, headerRowIndex, c);
@@ -587,6 +600,12 @@ function loadTasksFromExcel(filePath) {
         if (packageNameColumnIndex < 0 && PACKAGE_NAME_HEADER_CANDIDATES.has(normalized)) {
             packageNameColumnIndex = c;
         }
+        if (statusColumnIndex < 0 && STATUS_HEADER_CANDIDATES.has(normalized)) {
+            statusColumnIndex = c;
+        }
+        if (progressColumnIndex < 0 && PROGRESS_HEADER_CANDIDATES.has(normalized)) {
+            progressColumnIndex = c;
+        }
     }
 
     if (appNameColumnIndex < 0 || packageNameColumnIndex < 0) {
@@ -596,7 +615,54 @@ function loadTasksFromExcel(filePath) {
         );
     }
 
-    const statusManager = createNoopStatusManager();
+    let statusManager;
+    let csvRows = null;
+    if (isCsvSource) {
+        const stateFilePath = buildCsvStateFilePath(sourceFilePath);
+        const rows = loadCsvStateRows(stateFilePath);
+        csvRows = rows;
+        statusManager = createCsvStatusManager({
+            stateFilePath,
+            sourceFilePath,
+            rows
+        });
+    } else {
+        const refRange = XLSX.utils.decode_range(sheet['!ref']);
+        let nextColumnIndex = refRange.e.c + 1;
+        let changed = false;
+
+        if (statusColumnIndex < 0) {
+            statusColumnIndex = nextColumnIndex++;
+            setCellText(sheet, headerRowIndex, statusColumnIndex, 'status');
+            changed = true;
+            console.log('[STATUS] Added "status" column automatically.');
+        }
+        if (progressColumnIndex < 0) {
+            progressColumnIndex = nextColumnIndex++;
+            setCellText(sheet, headerRowIndex, progressColumnIndex, 'progress_step');
+            changed = true;
+            console.log('[PROGRESS] Added "progress_step" column automatically.');
+        }
+        if (changed) {
+            const nextRange = {
+                s: { r: refRange.s.r, c: refRange.s.c },
+                e: { r: Math.max(refRange.e.r, headerRowIndex), c: nextColumnIndex - 1 }
+            };
+            sheet['!ref'] = XLSX.utils.encode_range(nextRange);
+        }
+
+        statusManager = createExcelStatusManager({
+            filePath,
+            workbook,
+            sheetName: firstSheetName,
+            sheet,
+            statusColumnIndex,
+            progressColumnIndex
+        });
+        if (changed) {
+            statusManager.saveWorkbook();
+        }
+    }
     statusManager.sheetName = firstSheetName;
 
     const tasks = [];
@@ -626,13 +692,25 @@ function loadTasksFromExcel(filePath) {
             );
         }
 
+        let status = '';
+        let progressStep = '';
+        if (isCsvSource) {
+            const key = getCsvStateKey(packageName);
+            const stateRow = (csvRows || {})[key] || {};
+            status = normalizeStatusValue(stateRow.status);
+            progressStep = normalizeProgressStep(stateRow.progressStep);
+        } else {
+            status = normalizeStatusValue(getCellText(sheet, r, statusColumnIndex));
+            progressStep = normalizeProgressStep(getCellText(sheet, r, progressColumnIndex));
+        }
+
         tasks.push({
             appName,
             packageName,
             rowNumber: excelRowNumber,
             sheetRowIndex: r,
-            status: '',
-            progressStep: ''
+            status,
+            progressStep
         });
     }
 
@@ -775,6 +853,33 @@ async function waitSaved(page) {
     await delay(page, 5000); // Extra wait after save to allow backend processing.
 }
 
+function getRequiredEnvValue(envName, displayLabel) {
+    const value = String(process.env[envName] || '').trim();
+    if (!value) {
+        throw new Error(
+            `Missing required input: ${displayLabel}. ` +
+            `Please fill "${displayLabel}" in launcher form.`
+        );
+    }
+    return value;
+}
+
+function getRuntimeOptions() {
+    const webUsername = getRequiredEnvValue(WEB_USERNAME_ENV, 'web_username');
+    const webPassword = getRequiredEnvValue(WEB_PASSWORD_ENV, 'web_password');
+    const contactEmail = getRequiredEnvValue(CONTACT_EMAIL_ENV, 'contact_email');
+
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
+        throw new Error(`Invalid contact_email format: "${contactEmail}"`);
+    }
+
+    return {
+        webUsername,
+        webPassword,
+        contactEmail
+    };
+}
+
 function scoreConsolePageForReuse(url, appListUrl) {
     const currentUrl = String(url || '');
     if (!currentUrl) return -1;
@@ -817,7 +922,202 @@ async function acquireWorkingConsolePage(context, appListUrl) {
     return { page: newPage, source: 'created-new' };
 }
 
-async function runOnce(task, appListUrl, statusManager) {
+function buildSiteSlug(appName) {
+    const base = String(appName || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '')
+        .slice(0, 18);
+    const safeBase = base || 'appcreate';
+    const digitsLength = 2 + Math.floor(Math.random() * 2); // 2-3 digits
+    const suffix = String(Math.floor(Math.random() * Math.pow(10, digitsLength))).padStart(digitsLength, '0');
+    return `${safeBase}${suffix}`;
+}
+
+async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
+    const pages = context.pages().filter(p => !p.isClosed());
+    const reused = pages.find(p => matcher.test(String(p.url() || '')));
+    if (reused) {
+        await reused.bringToFront().catch(() => { });
+        return { page: reused, source: `reused-${label}` };
+    }
+
+    const created = await context.newPage();
+    await created.bringToFront().catch(() => { });
+    await created.goto(urlToOpen, { timeout: 120000, waitUntil: 'domcontentloaded' });
+    await delay(created, 2500);
+    return { page: created, source: `created-${label}` };
+}
+
+async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
+    const accountInput = appGeniePage.locator('#account, input[name="account"], input[type="text"]').first();
+    const passwordInput = appGeniePage.locator('#password, input[type="password"]').first();
+    const needLogin = await accountInput.isVisible().catch(() => false);
+
+    if (!needLogin) {
+        return;
+    }
+
+    console.log('[STEP] AppGenie login required, filling web_username/web_password...');
+    await retryAction(async () => {
+        await accountInput.waitFor({ state: 'visible', timeout: 30000 });
+        await accountInput.fill(runtimeOptions.webUsername);
+        await passwordInput.fill(runtimeOptions.webPassword);
+        const loginBtn = appGeniePage.locator('button[type="submit"], button.ant-btn-primary').first();
+        await loginBtn.click({ timeout: 10000 });
+    }, 'AppGenie login submit', 3);
+
+    await appGeniePage.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+    await delay(appGeniePage, 3000);
+}
+
+async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions) {
+    const { page: appGeniePage, source } = await acquireOrCreateAuxPage(
+        context,
+        /appgenie-ai\.com/i,
+        'https://appgenie-ai.com/user',
+        'appgenie'
+    );
+    console.log(`[PAGE] AppGenie tab: ${source} | ${appGeniePage.url() || 'about:blank'}`);
+    await appGeniePage.bringToFront();
+    await appGeniePage.goto('https://appgenie-ai.com/user', { timeout: 120000, waitUntil: 'domcontentloaded' });
+    await delay(appGeniePage, 3000);
+    await ensureAppGenieLoggedIn(appGeniePage, runtimeOptions);
+
+    const myTaskMenu = appGeniePage.locator('span.ant-menu-title-content').filter({
+        hasText: /我的任务|My tasks/i
+    }).first();
+    if (await myTaskMenu.isVisible().catch(() => false)) {
+        await myTaskMenu.click({ timeout: 10000 }).catch(() => { });
+        await delay(appGeniePage, 2500);
+    }
+
+    const rows = appGeniePage.locator('tr.ant-table-row');
+    await rows.first().waitFor({ state: 'visible', timeout: 60000 });
+
+    let emailRow = rows.filter({ hasText: runtimeOptions.contactEmail }).first();
+    if (!(await emailRow.isVisible().catch(() => false))) {
+        emailRow = rows.first();
+    }
+
+    await retryAction(async () => {
+        let viewBtn = emailRow.locator('button').filter({ hasText: /查看应用|View app/i }).first();
+        if (!(await viewBtn.isVisible().catch(() => false))) {
+            viewBtn = emailRow.locator('button').last();
+        }
+        await viewBtn.waitFor({ state: 'visible', timeout: 20000 });
+        await viewBtn.click({ timeout: 10000 });
+    }, 'Click AppGenie view app', 3);
+    await delay(appGeniePage, 3000);
+
+    let appCard = appGeniePage.locator('div.ant-card').filter({ hasText: task.packageName }).first();
+    if (!(await appCard.isVisible().catch(() => false))) {
+        appCard = appGeniePage.locator('div.ant-card').filter({ hasText: task.appName }).first();
+    }
+    await appCard.waitFor({ state: 'visible', timeout: 60000 });
+
+    const detailsBtn = appCard.locator('button').filter({ hasText: /详情|Detail/i }).first();
+    let detailsPage = appGeniePage;
+    const popupPromise = context.waitForEvent('page', { timeout: 12000 }).catch(() => null);
+    await detailsBtn.click({ timeout: 10000 });
+    const popup = await popupPromise;
+    if (popup) {
+        detailsPage = popup;
+        await detailsPage.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+        await delay(detailsPage, 2500);
+    } else {
+        await delay(appGeniePage, 3000);
+    }
+
+    const privacyCard = detailsPage.locator('div.ant-card').filter({
+        has: detailsPage.locator('.ant-card-head-title').filter({ hasText: /隐私协议|Privacy/i }).first()
+    }).first();
+    await privacyCard.waitFor({ state: 'visible', timeout: 60000 });
+
+    const privacyBody = privacyCard.locator('.ant-card-body').first();
+    let privacyText = await privacyBody.innerText().catch(() => '');
+    privacyText = String(privacyText || '').trim();
+    if (!privacyText) {
+        throw new Error('Failed to read privacy text from AppGenie details page.');
+    }
+
+    if (popup && !popup.isClosed()) {
+        await popup.close().catch(() => { });
+    }
+    return privacyText;
+}
+async function createAndPublishGoogleSite(context, task, privacyText) {
+    const { page: sitesPage, source } = await acquireOrCreateAuxPage(
+        context,
+        /sites\.google\.com/i,
+        'https://sites.google.com/new',
+        'sites'
+    );
+    console.log(`[PAGE] Sites tab: ${source} | ${sitesPage.url() || 'about:blank'}`);
+    await sitesPage.bringToFront();
+    await sitesPage.goto('https://sites.google.com/new', { timeout: 120000, waitUntil: 'domcontentloaded' });
+    await delay(sitesPage, 5000);
+
+    const titleInput = sitesPage.locator('#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd').first();
+    await titleInput.waitFor({ state: 'visible', timeout: 120000 });
+    await titleInput.click({ clickCount: 2, timeout: 10000 });
+    await titleInput.fill(task.appName);
+    await delay(sitesPage, 1000);
+
+    const canvas = sitesPage.locator('article[guidedhelpid="at-canvas"], article.UynGwb').first();
+    await canvas.waitFor({ state: 'visible', timeout: 60000 });
+    await canvas.click({ timeout: 10000 });
+    await delay(sitesPage, 500);
+    await sitesPage.keyboard.insertText(privacyText);
+    await delay(sitesPage, 1200);
+
+    const topPublishBtn = sitesPage.locator(
+        'div[role="button"][data-tooltip="Publish"], div[role="button"]:has-text("Publish"), button:has-text("Publish")'
+    ).first();
+    await retryAction(async () => {
+        await topPublishBtn.waitFor({ state: 'visible', timeout: 60000 });
+        await topPublishBtn.click({ timeout: 10000 });
+    }, 'Click Sites Publish(top)', 3);
+    await delay(sitesPage, 2000);
+
+    const addressInput = sitesPage.locator('input.poFWNe, input.zHQkBf, input[maxlength="31"]').first();
+    await addressInput.waitFor({ state: 'visible', timeout: 60000 });
+
+    let selectedSlug = '';
+    for (let attempt = 1; attempt <= 5; attempt++) {
+        selectedSlug = buildSiteSlug(task.appName);
+        await addressInput.click({ clickCount: 3, timeout: 10000 });
+        await addressInput.fill(selectedSlug);
+        await delay(sitesPage, 1200);
+
+        const unavailableHint = sitesPage.locator("text=/unavailable|already exists|can't|invalid/i").first();
+        if (await unavailableHint.isVisible().catch(() => false)) {
+            continue;
+        }
+        break;
+    }
+    if (!selectedSlug) {
+        throw new Error('Failed to generate a valid Google Sites web address.');
+    }
+
+    const finalPublishBtn = sitesPage.locator(
+        'div[role="button"][data-id="j6LnYe"], div[role="button"]:has-text("Publish"), button:has-text("Publish")'
+    ).last();
+    await retryAction(async () => {
+        await finalPublishBtn.waitFor({ state: 'visible', timeout: 60000 });
+        await finalPublishBtn.click({ timeout: 10000 });
+    }, 'Click Sites Publish(final)', 3);
+    await delay(sitesPage, 3000);
+
+    // Try to copy the link from publish dialog. If not available, fallback to deterministic URL.
+    const copyLinkBtn = sitesPage.locator('div[role="button"]:has-text("Copy link"), button:has-text("Copy link")').first();
+    if (await copyLinkBtn.isVisible().catch(() => false)) {
+        await copyLinkBtn.click({ timeout: 10000 }).catch(() => { });
+    }
+
+    return `https://sites.google.com/view/${selectedSlug}/home`;
+}
+
+async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
     const startTime = Date.now();
     const appName = task.appName;
     const packageName = task.packageName;
@@ -878,7 +1178,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 }
 
                 const loginTexts = page.locator(
-                    'text=/Sign in|登录|Use your Google Account|选择帐号|Choose an account/i'
+                    'text=/Sign in|登录|Use your Google Account|选择账号|Choose an account/i'
                 ).first();
                 return await loginTexts.isVisible().catch(() => false);
             };
@@ -1224,6 +1524,7 @@ async function runOnce(task, appListUrl, statusManager) {
             console.log('App path:', appBasePath);
 
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_APP_CREATED);
+            statusManager.updateTaskStatus(task, STATUS_PARTIAL);
 
         // --- Helper functions inside this run ---
         async function goToAppContent() {
@@ -1311,6 +1612,205 @@ async function runOnce(task, appListUrl, statusManager) {
                 await foundBtn.click({ timeout: 10000 });
                 await delay(page, 3000);
             }, `Click "${text}" button`);
+        }
+
+        async function fillFirstVisibleInput(selectors, value, label) {
+            await retryAction(async () => {
+                let target = null;
+                for (const sel of selectors) {
+                    const loc = page.locator(sel).first();
+                    if (await loc.isVisible().catch(() => false)) {
+                        target = loc;
+                        break;
+                    }
+                }
+                if (!target) {
+                    throw new Error(`${label} input not found.`);
+                }
+                await target.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                await target.fill(value);
+                await delay(page, 1200);
+            }, `Fill ${label}`);
+        }
+
+        async function runPrivacyPolicyStep() {
+            await goToAppContent();
+            console.log('Executing declaration 8/10: Privacy policy...');
+            await clickStartDeclaration('Privacy policy');
+
+            const privacyText = await openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions);
+            const privacyUrl = await createAndPublishGoogleSite(context, task, privacyText);
+
+            await page.bringToFront();
+            await delay(page, 2000);
+            await fillFirstVisibleInput(
+                [
+                    'input[aria-label="Privacy policy URL"]',
+                    'input[aria-label*="Privacy policy"]',
+                    'input[type="url"]',
+                    'input[type="text"]'
+                ],
+                privacyUrl,
+                'Privacy policy URL'
+            );
+            await clickMainButton('Save');
+            await waitSaved(page);
+            markStepDone(PROGRESS_STEP_PRIVACY_DONE);
+        }
+
+        async function clickNoOptionInFirstUncheckedRadioGroup() {
+            const clicked = await page.evaluate(() => {
+                const groups = Array.from(document.querySelectorAll('material-radio-group'));
+                for (const group of groups) {
+                    const hasChecked = !!group.querySelector('input[type="radio"]:checked, [role="radio"][aria-checked="true"]');
+                    if (hasChecked) continue;
+
+                    const radios = Array.from(group.querySelectorAll('material-radio, [role="radio"]'));
+                    if (!radios.length) continue;
+
+                    let target = radios.find(r => /\bNo\b/i.test((r.textContent || '').trim()));
+                    if (!target && radios.length >= 2) {
+                        target = radios[1];
+                    }
+                    if (!target) continue;
+
+                    const clickable = target.querySelector('input[type="radio"], .mdc-radio, [role="radio"]') || target;
+                    clickable.click();
+                    return true;
+                }
+                return false;
+            });
+            return !!clicked;
+        }
+
+        async function runContentRatingsStep() {
+            await goToAppContent();
+            console.log('Executing declaration 9/10: Content ratings...');
+            await clickStartDeclaration('Content ratings');
+
+            const startQuestionnaireBtn = page.locator(
+                '[debug-id="get-started-start-button"], button:has-text("Start questionnaire")'
+            ).first();
+            if (await startQuestionnaireBtn.isVisible().catch(() => false)) {
+                await retryAction(async () => {
+                    await startQuestionnaireBtn.click({ timeout: 10000 });
+                }, 'Click Start questionnaire', 3);
+                await delay(page, 4000);
+            }
+
+            await fillFirstVisibleInput(
+                [
+                    'input[type="email"]',
+                    'input[aria-label*="mail" i]',
+                    'input[aria-label*="email" i]'
+                ],
+                runtimeOptions.contactEmail,
+                'Content ratings email'
+            );
+
+            await retryAction(async () => {
+                const appTypeRadio = page.locator('material-radio, [role="radio"]').filter({
+                    hasText: /All other App Types/i
+                }).first();
+                if (!(await appTypeRadio.isVisible().catch(() => false))) {
+                    throw new Error('All other App Types radio not visible.');
+                }
+                await appTypeRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                await appTypeRadio.click({ timeout: 10000 });
+                await delay(page, 1000);
+            }, 'Select All other App Types', 3);
+
+            await selectCheckbox(/terms|conditions/i);
+            await clickMainButton('Next');
+
+            let reachedSave = false;
+            for (let i = 0; i < 40; i++) {
+                const saveBtn = page.locator(
+                    'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
+                ).first();
+                if (await saveBtn.isVisible().catch(() => false)) {
+                    reachedSave = true;
+                    break;
+                }
+
+                const clickedNo = await clickNoOptionInFirstUncheckedRadioGroup();
+                if (clickedNo) {
+                    await delay(page, 1200);
+                    continue;
+                }
+
+                const nextBtn = page.locator(
+                    'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next")'
+                ).first();
+                if (await nextBtn.isVisible().catch(() => false)) {
+                    await clickMainButton('Next');
+                    continue;
+                }
+
+                await page.mouse.wheel(0, 800).catch(() => { });
+                await delay(page, 1000);
+            }
+
+            if (!reachedSave) {
+                throw new Error('Content ratings questionnaire did not reach Save state.');
+            }
+
+            await clickMainButton('Save');
+            await waitSaved(page);
+
+            const nextAfterSave = page.locator(
+                'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next")'
+            ).first();
+            if (await nextAfterSave.isVisible().catch(() => false)) {
+                await clickMainButton('Next');
+                const finalSave = page.locator(
+                    'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
+                ).first();
+                if (await finalSave.isVisible().catch(() => false)) {
+                    await clickMainButton('Save');
+                    await waitSaved(page);
+                }
+            }
+
+            markStepDone(PROGRESS_STEP_RATING_DONE);
+        }
+
+        async function runDataSafetyStep() {
+            await goToAppContent();
+            console.log('Executing declaration 10/10: Data safety...');
+            await clickStartDeclaration('Data safety');
+
+            for (let i = 0; i < 12; i++) {
+                const saveBtn = page.locator(
+                    'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
+                ).first();
+                if (await saveBtn.isVisible().catch(() => false)) {
+                    await clickMainButton('Save');
+                    await waitSaved(page);
+                    markStepDone(PROGRESS_STEP_SAFETY_DONE);
+                    return;
+                }
+
+                const noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^No\b/i }).first();
+                if (await noRadio.isVisible().catch(() => false)) {
+                    await noRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await noRadio.click({ timeout: 10000 });
+                    await delay(page, 1200);
+                }
+
+                const nextBtn = page.locator(
+                    'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next")'
+                ).first();
+                if (await nextBtn.isVisible().catch(() => false)) {
+                    await clickMainButton('Next');
+                    continue;
+                }
+
+                await page.mouse.wheel(0, 800).catch(() => { });
+                await delay(page, 1000);
+            }
+
+            throw new Error('Data safety flow did not reach Save state.');
         }
 
         // --- Execute declarations flow in strict one-pass mode ---
@@ -1555,8 +2055,13 @@ async function runOnce(task, appListUrl, statusManager) {
             await delay(page, 3000);
 
             markStepDone(PROGRESS_STEP_COUNTRY_DONE);
-        statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
-        task.status = STATUS_DONE;
+            await runPrivacyPolicyStep();
+            await runContentRatingsStep();
+            await runDataSafetyStep();
+
+            statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
+            statusManager.updateTaskStatus(task, STATUS_DONE);
+            task.status = STATUS_DONE;
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
         console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
@@ -1572,10 +2077,14 @@ async function runOnce(task, appListUrl, statusManager) {
 
 (async () => {
     const { inputFileArg } = parseCliArgs();
+    const runtimeOptions = getRuntimeOptions();
     const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
     const inputFilePath = resolveInputExcelFile(inputFileArg);
     const runtimeInput = resolveRuntimeInput(inputFilePath);
-    const { tasks, sheetName, statusManager } = loadTasksFromExcel(runtimeInput.runtimeWorkbookPath);
+    const { tasks, sheetName, statusManager } = loadTasksFromExcel(
+        runtimeInput.runtimeWorkbookPath,
+        runtimeInput.sourceFilePath
+    );
     const selectedTasks = tasks;
 
     console.log(`Developer console URL loaded from: ${configPath}`);
@@ -1607,7 +2116,7 @@ async function runOnce(task, appListUrl, statusManager) {
             `Status="${task.status || 'EMPTY'}" | Progress="${task.progressStep || 'EMPTY'}"`
         );
         try {
-            await runOnce(task, appListUrl, statusManager);
+            await runOnce(task, appListUrl, statusManager, runtimeOptions);
             runStats.success += 1;
             runStats.successItems.push({
                 appName: task.appName,
@@ -1617,9 +2126,8 @@ async function runOnce(task, appListUrl, statusManager) {
             const errorCode = String((e && e.code) || '');
             const isCreateFailedToast = errorCode === 'CREATE_FAILED_TOAST';
             const isCreateFailedTimeout = errorCode === 'CREATE_FAILED_TIMEOUT';
-            if (isCreateFailedToast || isCreateFailedTimeout) {
-                task.status = STATUS_FAILED;
-            }
+            task.status = STATUS_FAILED;
+            statusManager.updateTaskStatus(task, STATUS_FAILED);
 
             runStats.failed.push({
                 appName: task.appName,
@@ -1685,5 +2193,6 @@ async function runOnce(task, appListUrl, statusManager) {
     console.error(`[INIT ERROR] ${err.message}`);
     process.exit(1);
 });
+
 
 
