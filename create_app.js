@@ -949,9 +949,22 @@ async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
 }
 
 async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
-    const accountInput = appGeniePage.locator('#account, input[name="account"], input[type="text"]').first();
-    const passwordInput = appGeniePage.locator('#password, input[type="password"]').first();
-    const needLogin = await accountInput.isVisible().catch(() => false);
+    const loggedInIndicators = [
+        'span.ant-menu-title-content:has-text("我的任务")',
+        'span.ant-menu-title-content:has-text("任务池")',
+        'button:has-text("退出")',
+        'tr.ant-table-row'
+    ];
+    for (const selector of loggedInIndicators) {
+        const visible = await appGeniePage.locator(selector).first().isVisible().catch(() => false);
+        if (visible) {
+            return;
+        }
+    }
+
+    const accountInput = appGeniePage.locator('#account, input[name="account"], input[autocomplete="username"]').first();
+    const passwordInput = appGeniePage.locator('#password, input[name="password"], input[type="password"]').first();
+    const needLogin = await passwordInput.isVisible().catch(() => false);
 
     if (!needLogin) {
         return;
@@ -1537,6 +1550,55 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        async function goToAppContentViaMonitorPolicyMenu() {
+            const monitorAndImproveLink = page.locator(
+                'a[href*="/monitor"], a.item-link:has(.item-label:has-text("Monitor and improve")), [role="button"]:has-text("Monitor and improve")'
+            ).first();
+            const policyAndProgramsLink = page.locator(
+                'a.item-link:has(.item-label:has-text("Policy and programs")), [role="button"]:has-text("Policy and programs")'
+            ).first();
+            const appContentLink = page.locator(
+                'a[href*="/app-content/overview"], a[href*="/app-content"], a.item-link:has(.item-label:has-text("App content")), [role="button"]:has-text("App content")'
+            ).first();
+
+            console.log('Navigating to "Monitor and improve"...');
+            await retryAction(async () => {
+                await monitorAndImproveLink.waitFor({ state: 'visible', timeout: 60000 });
+                await monitorAndImproveLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                await monitorAndImproveLink.click({ timeout: 10000 });
+                await delay(page, 2500);
+            }, 'Open Monitor and improve', 3);
+            await delay(page, 2500);
+
+            console.log('Opening "Policy and programs"...');
+            await retryAction(async () => {
+                const appContentVisibleBefore = await appContentLink.isVisible().catch(() => false);
+                if (!appContentVisibleBefore) {
+                    await policyAndProgramsLink.waitFor({ state: 'visible', timeout: 60000 });
+                    await policyAndProgramsLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    await policyAndProgramsLink.click({ timeout: 10000 });
+                    await delay(page, 1500);
+                }
+                await appContentLink.waitFor({ state: 'visible', timeout: 45000 });
+            }, 'Open Policy and programs', 3);
+            await delay(page, 2000);
+
+            console.log('Opening "App content"...');
+            await retryAction(async () => {
+                await appContentLink.waitFor({ state: 'visible', timeout: 60000 });
+                await appContentLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                await appContentLink.click({ timeout: 10000 });
+                await page.waitForURL(/\/app-content\/overview(?:[/?#]|$)|\/app-content(?:[/?#]|$)/, { timeout: 120000 });
+            }, 'Open App content from menu', 3);
+            await delay(page, 4000);
+
+            const tab = page.locator('div[role="tab"]:has-text("Need attention")');
+            if (await tab.isVisible().catch(() => false)) {
+                await tab.click().catch(() => { });
+                await delay(page, 2000);
+            }
+        }
+
         async function clickStartDeclaration(sectionTitle) {
             const buttonByAria = page.locator(
                 `button[aria-label="Start ${sectionTitle} declaration"], button[aria-label*="Start ${sectionTitle} declaration"]`
@@ -1634,7 +1696,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         }
 
         async function runPrivacyPolicyStep() {
-            await goToAppContent();
+            await goToAppContentViaMonitorPolicyMenu();
             console.log('Executing declaration 8/10: Privacy policy...');
             await clickStartDeclaration('Privacy policy');
 

@@ -190,7 +190,7 @@ $btnBrowse.Size = New-Object System.Drawing.Size(100, 28)
 $form.Controls.Add($btnBrowse)
 
 $labelWebUser = New-Object System.Windows.Forms.Label
-$labelWebUser.Text = "网页账号（web_username）"
+$labelWebUser.Text = "灵构账号"
 $labelWebUser.Location = New-Object System.Drawing.Point(24, 172)
 $labelWebUser.Size = New-Object System.Drawing.Size(220, 20)
 $form.Controls.Add($labelWebUser)
@@ -201,7 +201,7 @@ $txtWebUser.Size = New-Object System.Drawing.Size(700, 24)
 $form.Controls.Add($txtWebUser)
 
 $labelWebPass = New-Object System.Windows.Forms.Label
-$labelWebPass.Text = "网页密码（web_password）"
+$labelWebPass.Text = "灵构密码"
 $labelWebPass.Location = New-Object System.Drawing.Point(24, 230)
 $labelWebPass.Size = New-Object System.Drawing.Size(220, 20)
 $form.Controls.Add($labelWebPass)
@@ -209,11 +209,11 @@ $form.Controls.Add($labelWebPass)
 $txtWebPass = New-Object System.Windows.Forms.TextBox
 $txtWebPass.Location = New-Object System.Drawing.Point(24, 252)
 $txtWebPass.Size = New-Object System.Drawing.Size(700, 24)
-$txtWebPass.UseSystemPasswordChar = $true
+$txtWebPass.UseSystemPasswordChar = $false
 $form.Controls.Add($txtWebPass)
 
 $labelContactEmail = New-Object System.Windows.Forms.Label
-$labelContactEmail.Text = "联系邮箱（contact_email）"
+$labelContactEmail.Text = "账号邮箱"
 $labelContactEmail.Location = New-Object System.Drawing.Point(24, 288)
 $labelContactEmail.Size = New-Object System.Drawing.Size(220, 20)
 $form.Controls.Add($labelContactEmail)
@@ -289,20 +289,20 @@ $btnStart.Add_Click({
 
         $webUsername = $txtWebUser.Text.Trim()
         if (-not $webUsername) {
-            throw "请填写网页账号（web_username）。"
+            throw "Please enter Linggou username."
         }
 
         $webPassword = $txtWebPass.Text
         if ([string]::IsNullOrWhiteSpace($webPassword)) {
-            throw "请填写网页密码（web_password）。"
+            throw "Please enter Linggou password."
         }
 
         $contactEmail = $txtContactEmail.Text.Trim()
         if (-not $contactEmail) {
-            throw "请填写联系邮箱（contact_email）。"
+            throw "Please enter account email."
         }
         if ($contactEmail -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
-            throw "联系邮箱格式不正确。"
+            throw "Invalid account email format."
         }
 
         $script:selectedDeveloperUrl = $devUrl
