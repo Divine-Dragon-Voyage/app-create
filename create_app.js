@@ -934,13 +934,20 @@ async function acquireWorkingConsolePage(context, appListUrl) {
 
 function buildSiteSlug(appName) {
     const base = String(appName || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '')
-        .slice(0, 18);
+        .replace(/[^A-Za-z0-9]+/g, '')
+        .slice(0, 28);
     const safeBase = base || 'appcreate';
     const digitsLength = 2 + Math.floor(Math.random() * 2); // 2-3 digits
-    const suffix = String(Math.floor(Math.random() * Math.pow(10, digitsLength))).padStart(digitsLength, '0');
-    return `${safeBase}${suffix}`;
+    let suffix = '';
+    for (let i = 0; i < digitsLength; i += 1) {
+        suffix += String(1 + Math.floor(Math.random() * 9)); // 1-9 only
+    }
+
+    let candidate = `${safeBase}${suffix}`;
+    if (!/^[a-z]/.test(candidate)) {
+        candidate = `a${candidate}`;
+    }
+    return candidate.slice(0, 31);
 }
 
 async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
@@ -1266,10 +1273,55 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     if (await contentTarget.isVisible().catch(() => false)) {
         await contentTarget.click({ timeout: 10000 }).catch(() => { });
     }
-    await delay(sitesPage, 280);
-    await sitesPage.keyboard.insertText(privacyText);
-    await delay(sitesPage, 900);
-    console.log(`[COPY] Privacy text pasted into Sites editor (length=${String(privacyText || '').length}).`);
+    await delay(sitesPage, 220);
+
+    const clipboardSeeded = await sitesPage.evaluate(async (text) => {
+        try {
+            await navigator.clipboard.writeText(String(text || ''));
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }, privacyText).catch(() => false);
+    if (clipboardSeeded) {
+        console.log('[COPY] Sites clipboard prepared.');
+    } else {
+        console.log('[COPY] Sites clipboard write blocked, trying Ctrl+V with existing clipboard.');
+    }
+
+    const verifyPastedLength = async () => {
+        return await sitesPage.evaluate(() => {
+            const nodes = Array.from(
+                document.querySelectorAll('div[contenteditable="true"][role="textbox"]')
+            ).filter(node => !node.closest('section[data-header="true"]'));
+            const merged = nodes.map(node => (node.innerText || '').trim()).join('\n').trim();
+            return merged.length;
+        });
+    };
+
+    await sitesPage.keyboard.press('Control+V');
+    await delay(sitesPage, 1000);
+    let pastedLength = await verifyPastedLength();
+    const minExpectedLength = Math.max(80, Math.min(500, Math.floor(String(privacyText || '').length * 0.1)));
+
+    if (pastedLength < minExpectedLength) {
+        console.log(`[COPY] First Ctrl+V seems incomplete (length=${pastedLength}), retrying once...`);
+        await bodyCanvas.click({ timeout: 10000, position: { x: 320, y: 320 } }).catch(() => { });
+        await delay(sitesPage, 180);
+        if (await contentTarget.isVisible().catch(() => false)) {
+            await contentTarget.click({ timeout: 10000 }).catch(() => { });
+        }
+        await sitesPage.keyboard.press('Control+V');
+        await delay(sitesPage, 1000);
+        pastedLength = await verifyPastedLength();
+    }
+
+    if (pastedLength < minExpectedLength) {
+        throw new Error(
+            `Privacy text paste verification failed. Current body text length=${pastedLength}, expected >= ${minExpectedLength}.`
+        );
+    }
+    console.log(`[COPY] Privacy text pasted into Sites editor (length=${pastedLength}).`);
 
     const topPublishBtn = sitesPage.locator(
         'div[role="button"][data-tooltip="Publish"], div[role="button"]:has-text("Publish"), button:has-text("Publish")'
@@ -1280,17 +1332,27 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     }, 'Click Sites Publish(top)', 3);
     await delay(sitesPage, 2000);
 
-    const addressInput = sitesPage.locator('input.poFWNe, input.zHQkBf, input[maxlength="31"]').first();
+    const publishDialog = sitesPage.locator('div[role="dialog"], div[aria-modal="true"]')
+        .filter({ hasText: /Publish to the web|Web address|发布/i })
+        .first();
+    await publishDialog.waitFor({ state: 'visible', timeout: 60000 });
+
+    const addressInput = publishDialog.locator(
+        'div[jsname="YEWROd"] input.poFWNe[jsname="YPqjbf"], input.poFWNe[jsname="YPqjbf"][maxlength="31"], input.poFWNe[maxlength="31"]'
+    ).first();
     await addressInput.waitFor({ state: 'visible', timeout: 60000 });
 
     let selectedSlug = '';
     for (let attempt = 1; attempt <= 5; attempt++) {
         selectedSlug = buildSiteSlug(task.appName);
-        await addressInput.click({ clickCount: 3, timeout: 10000 });
         await addressInput.fill(selectedSlug);
+        await addressInput.evaluate((el) => {
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        });
         await delay(sitesPage, 1200);
 
-        const unavailableHint = sitesPage.locator("text=/unavailable|already exists|can't|invalid/i").first();
+        const unavailableHint = publishDialog.locator("text=/unavailable|already exists|can't|invalid|已被使用|不可用|无效/i").first();
         if (await unavailableHint.isVisible().catch(() => false)) {
             continue;
         }
@@ -1300,8 +1362,8 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
         throw new Error('Failed to generate a valid Google Sites web address.');
     }
 
-    const finalPublishBtn = sitesPage.locator(
-        'div[role="button"][data-id="j6LnYe"], div[role="button"]:has-text("Publish"), button:has-text("Publish")'
+    const finalPublishBtn = publishDialog.locator(
+        'div[role="button"][data-id="j6LnYe"], div[role="button"]:has-text("Publish"), button:has-text("Publish"), div[role="button"]:has-text("发布"), button:has-text("发布")'
     ).last();
     await retryAction(async () => {
         await finalPublishBtn.waitFor({ state: 'visible', timeout: 60000 });
