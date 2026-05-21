@@ -1250,20 +1250,22 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
         console.log('[STEP] Sites header area not visible, skip header cleanup.');
     }
 
-    let contentTarget = sitesPage.locator(
+    const bodyCanvas = sitesPage.locator(
+        'div.YyZdKd, article[guidedhelpid="at-canvas"], article.UynGwb, article[guidedhelpid]'
+    ).first();
+    await bodyCanvas.waitFor({ state: 'visible', timeout: 120000 });
+    console.log('[STEP] Activating white canvas by single click...');
+    await retryAction(async () => {
+        await bodyCanvas.click({ timeout: 10000, position: { x: 300, y: 300 } });
+    }, 'Activate Sites white canvas by click', 3);
+    await delay(sitesPage, 380);
+
+    const contentTarget = sitesPage.locator(
         'xpath=(//div[@contenteditable="true" and @role="textbox" and not(ancestor::section[@data-header="true"])])[1]'
     ).first();
-    if (!(await contentTarget.isVisible().catch(() => false))) {
-        const canvas = sitesPage.locator('article.UynGwb, article[guidedhelpid], article').first();
-        await canvas.waitFor({ state: 'visible', timeout: 30000 });
-        await canvas.click({ timeout: 10000, position: { x: 300, y: 460 } }).catch(() => { });
-        await delay(sitesPage, 400);
-        contentTarget = sitesPage.locator(
-            'div[contenteditable="true"][role="textbox"], div[contenteditable="true"][aria-label="Text"]'
-        ).first();
+    if (await contentTarget.isVisible().catch(() => false)) {
+        await contentTarget.click({ timeout: 10000 }).catch(() => { });
     }
-    await contentTarget.waitFor({ state: 'visible', timeout: 120000 });
-    await contentTarget.click({ timeout: 10000 });
     await delay(sitesPage, 280);
     await sitesPage.keyboard.insertText(privacyText);
     await delay(sitesPage, 900);
