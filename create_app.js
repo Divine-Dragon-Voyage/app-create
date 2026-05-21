@@ -1019,15 +1019,16 @@ async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
         await submitBtn.click({ timeout: 10000 });
     }, 'AppGenie login submit', 3);
 
-    await retryAction(async () => {
+    // Use fast polling here to avoid long global retry backoff (5-10s) on slow redirects.
+    const loginWaitStart = Date.now();
+    const loginWaitTimeoutMs = 45000;
+    while (Date.now() - loginWaitStart < loginWaitTimeoutMs) {
         if (await isLoggedIn()) {
             return;
         }
-        await appGeniePage.waitForTimeout(1500);
-        if (!(await isLoggedIn())) {
-            throw new Error('AppGenie did not reach logged-in state yet.');
-        }
-    }, 'Wait AppGenie logged-in state', 4);
+        await appGeniePage.waitForTimeout(1200 + Math.floor(Math.random() * 1200));
+    }
+    throw new Error('AppGenie did not reach logged-in state yet.');
 }
 
 async function ensureAppGenieOnMyTasks(appGeniePage) {
@@ -1186,10 +1187,21 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     console.log(`[PAGE] Sites tab: ${source} | ${sitesPage.url() || 'about:blank'}`);
     await sitesPage.bringToFront();
     await sitesPage.goto('https://sites.google.com/new', { timeout: 120000, waitUntil: 'domcontentloaded' });
-    await sitesPage.waitForLoadState('load', { timeout: 120000 }).catch(() => { });
-    await sitesPage.waitForLoadState('networkidle', { timeout: 120000 }).catch(() => { });
-    console.log('[STEP] Waiting Google Sites ready window (5-10s)...');
-    await randomDelay(sitesPage, 5000, 10000);
+    await randomDelay(sitesPage, 800, 1800);
+
+    const waitSitesEditorReady = async (timeoutMs = 90000) => {
+        await sitesPage.waitForFunction(() => {
+            const urlReady = /\/edit(?:[/?#]|$)/i.test(String(window.location.pathname || ''));
+            const hasDocNameInput = !!document.querySelector(
+                '#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd'
+            );
+            const hasEditableText = !!document.querySelector('div[contenteditable="true"][role="textbox"]');
+            const hasPublish = Array.from(document.querySelectorAll('button, div[role="button"]')).some(el =>
+                /\bPublish\b/i.test((el.textContent || '').trim())
+            );
+            return urlReady || hasDocNameInput || hasEditableText || hasPublish;
+        }, { timeout: timeoutMs });
+    };
 
     const titleInput = sitesPage.locator(
         '#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd, input[aria-label*="site name" i], input[placeholder*="site name" i]'
@@ -1208,23 +1220,29 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
             await blankSiteCard.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => { });
             await blankSiteCard.click({ timeout: 10000 });
         }, 'Click Sites Blank site', 3);
-
-        await sitesPage.waitForLoadState('domcontentloaded', { timeout: 120000 }).catch(() => { });
-        await sitesPage.waitForLoadState('networkidle', { timeout: 120000 }).catch(() => { });
-        await randomDelay(sitesPage, 5000, 10000);
+        await waitSitesEditorReady(120000);
     }
+    await waitSitesEditorReady(120000);
 
     await titleInput.waitFor({ state: 'visible', timeout: 120000 });
+    console.log('[STEP] Sites editor ready, filling site name...');
     await titleInput.click({ clickCount: 2, timeout: 10000 });
     await titleInput.fill(task.appName);
-    await delay(sitesPage, 1000);
-
-    const canvas = sitesPage.locator('article[guidedhelpid="at-canvas"], article.UynGwb').first();
-    await canvas.waitFor({ state: 'visible', timeout: 60000 });
-    await canvas.click({ timeout: 10000 });
     await delay(sitesPage, 500);
+
+    const contentTarget = sitesPage.locator(
+        'div[contenteditable="true"][role="textbox"], div[contenteditable="true"][aria-label="Text"], h1 span.C9DxTc'
+    ).first();
+    await contentTarget.waitFor({ state: 'visible', timeout: 120000 });
+    await contentTarget.click({ timeout: 10000 });
+    await delay(sitesPage, 300);
+    await sitesPage.keyboard.press('Control+A').catch(() => { });
+    await delay(sitesPage, 200);
+    await sitesPage.keyboard.press('Delete').catch(() => { });
+    await delay(sitesPage, 250);
     await sitesPage.keyboard.insertText(privacyText);
-    await delay(sitesPage, 1200);
+    await delay(sitesPage, 900);
+    console.log(`[COPY] Privacy text pasted into Sites editor (length=${String(privacyText || '').length}).`);
 
     const topPublishBtn = sitesPage.locator(
         'div[role="button"][data-tooltip="Publish"], div[role="button"]:has-text("Publish"), button:has-text("Publish")'
