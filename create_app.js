@@ -1073,7 +1073,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     await ensureAppGenieLoggedIn(appGeniePage, runtimeOptions);
     await ensureAppGenieOnMyTasks(appGeniePage);
     // Slow down intentionally on VPS so list state is fully ready before actions.
-    await randomDelay(appGeniePage, 3000, 6000);
+    await randomDelay(appGeniePage, 5000, 8000);
 
     let emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
     if (!(await emailRow.isVisible().catch(() => false))) {
@@ -1094,7 +1094,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     }, 'Open AppGenie pending app drawer', 3);
 
     // Give drawer animation/data some time before locating target card.
-    await randomDelay(appGeniePage, 3500, 6500);
+    await randomDelay(appGeniePage, 4000, 7000);
 
     const drawerBody = appGeniePage.locator('.ant-drawer-content .ant-drawer-body, .ant-drawer-body').first();
     await drawerBody.waitFor({ state: 'visible', timeout: 60000 }).catch(() => { });
@@ -1119,7 +1119,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         await detailBtn.waitFor({ state: 'visible', timeout: 30000 });
         await detailBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
         // Slow down between View App and Details click.
-        await randomDelay(appGeniePage, 2500, 5000);
+        await randomDelay(appGeniePage, 3000, 6000);
         await detailBtn.click({ timeout: 10000 });
     }, 'Click AppGenie details button', 3);
 
@@ -1128,6 +1128,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         detailsPage = popup;
         await detailsPage.bringToFront().catch(() => { });
         await detailsPage.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+        await detailsPage.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
         await detailsPage.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => { });
     }
     await randomDelay(detailsPage, 5000, 9000);
@@ -1148,10 +1149,30 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         }
         privacyText = text;
     }, 'Wait AppGenie privacy content ready', 4);
+    console.log(`[COPY] Privacy text found (length=${privacyText.length}).`);
 
-    if (popup && !popup.isClosed()) {
-        await popup.close().catch(() => { });
+    let copied = false;
+    const copyBtn = privacyCard.locator('button:has-text("复制"), button:has-text("Copy"), [role="button"]:has-text("复制"), [role="button"]:has-text("Copy")').first();
+    if (await copyBtn.isVisible().catch(() => false)) {
+        copied = await copyBtn.click({ timeout: 10000 }).then(() => true).catch(() => false);
     }
+    if (!copied) {
+        copied = await detailsPage.evaluate(async (text) => {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch {
+                return false;
+            }
+        }, privacyText).catch(() => false);
+    }
+    if (copied) {
+        console.log('[COPY] Privacy text copy success.');
+    } else {
+        console.log('[COPY] Privacy text copy skipped/blocked, using captured text in memory.');
+    }
+
+    // Keep detail page open for later reuse steps.
     return privacyText;
 }
 
@@ -1165,7 +1186,10 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     console.log(`[PAGE] Sites tab: ${source} | ${sitesPage.url() || 'about:blank'}`);
     await sitesPage.bringToFront();
     await sitesPage.goto('https://sites.google.com/new', { timeout: 120000, waitUntil: 'domcontentloaded' });
-    await delay(sitesPage, 5000);
+    await sitesPage.waitForLoadState('load', { timeout: 120000 }).catch(() => { });
+    await sitesPage.waitForLoadState('networkidle', { timeout: 120000 }).catch(() => { });
+    console.log('[STEP] Waiting Google Sites ready window (15-20s)...');
+    await randomDelay(sitesPage, 15000, 20000);
 
     const titleInput = sitesPage.locator('#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd').first();
     await titleInput.waitFor({ state: 'visible', timeout: 120000 });
