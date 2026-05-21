@@ -754,6 +754,16 @@ async function delay(page, ms = DELAY) {
     await page.waitForTimeout(ms);
 }
 
+function randomInt(min, max) {
+    const lo = Math.min(min, max);
+    const hi = Math.max(min, max);
+    return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+}
+
+async function randomDelay(page, minMs, maxMs) {
+    await delay(page, randomInt(minMs, maxMs));
+}
+
 async function waitForEnabled(locator, timeoutMs = 15000) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
@@ -996,14 +1006,14 @@ async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
         await accountInput.fill('');
         await accountInput.type(runtimeOptions.webUsername, { delay: 60 });
 
-        await delay(appGeniePage, 500 + Math.floor(Math.random() * 800));
+        await randomDelay(appGeniePage, 1500, 3000);
 
         await passwordInput.waitFor({ state: 'visible', timeout: 30000 });
         await passwordInput.click({ timeout: 10000 });
         await passwordInput.fill('');
         await passwordInput.type(runtimeOptions.webPassword, { delay: 55 });
 
-        await delay(appGeniePage, 800 + Math.floor(Math.random() * 1200));
+        await randomDelay(appGeniePage, 2000, 4000);
 
         await submitBtn.waitFor({ state: 'visible', timeout: 30000 });
         await submitBtn.click({ timeout: 10000 });
@@ -1062,6 +1072,8 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
 
     await ensureAppGenieLoggedIn(appGeniePage, runtimeOptions);
     await ensureAppGenieOnMyTasks(appGeniePage);
+    // Slow down intentionally on VPS so list state is fully ready before actions.
+    await randomDelay(appGeniePage, 3000, 6000);
 
     let emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
     if (!(await emailRow.isVisible().catch(() => false))) {
@@ -1081,7 +1093,8 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         }
     }, 'Open AppGenie pending app drawer', 3);
 
-    await delay(appGeniePage, 2000);
+    // Give drawer animation/data some time before locating target card.
+    await randomDelay(appGeniePage, 3500, 6500);
 
     const drawerBody = appGeniePage.locator('.ant-drawer-content .ant-drawer-body, .ant-drawer-body').first();
     await drawerBody.waitFor({ state: 'visible', timeout: 60000 }).catch(() => { });
@@ -1097,7 +1110,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     const detailBtnFallback = appCard.locator('div[style*="border-top"] button.ant-btn').first();
 
     let detailsPage = appGeniePage;
-    const popupPromise = context.waitForEvent('page', { timeout: 10000 }).catch(() => null);
+    const popupPromise = context.waitForEvent('page', { timeout: 30000 }).catch(() => null);
     await retryAction(async () => {
         let detailBtn = detailBtnByText;
         if (!(await detailBtn.isVisible().catch(() => false))) {
@@ -1105,27 +1118,36 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         }
         await detailBtn.waitFor({ state: 'visible', timeout: 30000 });
         await detailBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+        // Slow down between View App and Details click.
+        await randomDelay(appGeniePage, 2500, 5000);
         await detailBtn.click({ timeout: 10000 });
     }, 'Click AppGenie details button', 3);
 
     const popup = await popupPromise;
     if (popup) {
         detailsPage = popup;
+        await detailsPage.bringToFront().catch(() => { });
         await detailsPage.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+        await detailsPage.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => { });
     }
-    await delay(detailsPage, 2500);
+    await randomDelay(detailsPage, 5000, 9000);
 
     const privacyCard = detailsPage.locator('div.ant-card').filter({
         has: detailsPage.locator('.ant-card-head-title').filter({ hasText: /隐私|Privacy/i }).first()
     }).first();
-    await privacyCard.waitFor({ state: 'visible', timeout: 60000 });
-
     const privacyBody = privacyCard.locator('.ant-card-body').first();
-    let privacyText = await privacyBody.innerText().catch(() => '');
-    privacyText = String(privacyText || '').trim();
-    if (!privacyText) {
-        throw new Error('Failed to read privacy text from AppGenie details page.');
-    }
+
+    let privacyText = '';
+    await retryAction(async () => {
+        await privacyCard.waitFor({ state: 'visible', timeout: 45000 });
+        await privacyBody.waitFor({ state: 'visible', timeout: 45000 });
+        const text = String(await privacyBody.innerText().catch(() => '')).trim();
+        // Prevent premature handoff to Sites with half-loaded/empty content.
+        if (text.length < 40) {
+            throw new Error(`Privacy text not ready yet (length=${text.length}).`);
+        }
+        privacyText = text;
+    }, 'Wait AppGenie privacy content ready', 4);
 
     if (popup && !popup.isClosed()) {
         await popup.close().catch(() => { });
