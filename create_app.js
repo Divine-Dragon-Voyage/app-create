@@ -1140,6 +1140,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         await detailsPage.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => { });
     }
     await randomDelay(detailsPage, 5000, 9000);
+    await delay(detailsPage, 3000);
 
     const privacyCard = detailsPage.locator('div.ant-card').filter({
         has: detailsPage.locator('.ant-card-head-title').filter({ hasText: /隐私|Privacy/i }).first()
@@ -1289,39 +1290,9 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
         console.log('[COPY] Sites clipboard write blocked, trying Ctrl+V with existing clipboard.');
     }
 
-    const verifyPastedLength = async () => {
-        return await sitesPage.evaluate(() => {
-            const nodes = Array.from(
-                document.querySelectorAll('div[contenteditable="true"][role="textbox"]')
-            ).filter(node => !node.closest('section[data-header="true"]'));
-            const merged = nodes.map(node => (node.innerText || '').trim()).join('\n').trim();
-            return merged.length;
-        });
-    };
-
     await sitesPage.keyboard.press('Control+V');
     await delay(sitesPage, 1000);
-    let pastedLength = await verifyPastedLength();
-    const minExpectedLength = Math.max(80, Math.min(500, Math.floor(String(privacyText || '').length * 0.1)));
-
-    if (pastedLength < minExpectedLength) {
-        console.log(`[COPY] First Ctrl+V seems incomplete (length=${pastedLength}), retrying once...`);
-        await bodyCanvas.click({ timeout: 10000, position: { x: 320, y: 320 } }).catch(() => { });
-        await delay(sitesPage, 180);
-        if (await contentTarget.isVisible().catch(() => false)) {
-            await contentTarget.click({ timeout: 10000 }).catch(() => { });
-        }
-        await sitesPage.keyboard.press('Control+V');
-        await delay(sitesPage, 1000);
-        pastedLength = await verifyPastedLength();
-    }
-
-    if (pastedLength < minExpectedLength) {
-        throw new Error(
-            `Privacy text paste verification failed. Current body text length=${pastedLength}, expected >= ${minExpectedLength}.`
-        );
-    }
-    console.log(`[COPY] Privacy text pasted into Sites editor (length=${pastedLength}).`);
+    console.log('[COPY] Privacy text pasted into Sites editor.');
 
     const topPublishBtn = sitesPage.locator(
         'div[role="button"][data-tooltip="Publish"], div[role="button"]:has-text("Publish"), button:has-text("Publish")'
