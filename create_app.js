@@ -15,8 +15,8 @@ const APP_NAME_HEADER_CANDIDATES = new Set([
 ]);
 
 const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
-    '搴旂敤鍖呭悕',
-    '鍖呭悕',
+    '\u5e94\u7528\u5305\u540d',
+    '\u5305\u540d',
     'apppackagename',
     'packagename',
     'applicationid'
@@ -611,7 +611,7 @@ function loadTasksFromExcel(filePath, sourceFilePath = filePath) {
     if (appNameColumnIndex < 0 || packageNameColumnIndex < 0) {
         throw new Error(
             `Missing required columns. Found headers: ${headers.join(', ')}. ` +
-            'Need columns like: 搴旂敤鍚嶇О / 搴旂敤鍖呭悕 (or App Name / App Package Name).'
+            'Need columns like: App Name / App Package Name (or 应用名称 / 应用包名).'
         );
     }
 
