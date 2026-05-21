@@ -1230,42 +1230,38 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     await titleInput.fill(task.appName);
     await delay(sitesPage, 500);
 
-    const headerArea = sitesPage.locator('div[jsname="Zz0G1b"]').first();
+    const headerArea = sitesPage.locator('div[jsname="Zz0G1b"], section[data-header="true"]').first();
     const deleteHeaderBtn = sitesPage.locator(
-        'button[aria-label*="Delete header"], button[aria-label*="删除"]'
+        'button[aria-label="Delete header"], button[aria-label*="Delete header"], button[aria-label*="删除"]'
     ).first();
-    const headerTitleText = sitesPage.locator('text=Your page title, text=Click to edit text').first();
 
-    console.log('[STEP] Clearing Sites header block (Delete first, trash fallback)...');
+    console.log('[STEP] Clearing Sites header block by trash button...');
     const headerVisible = await headerArea.isVisible().catch(() => false);
     if (headerVisible) {
         await retryAction(async () => {
+            await headerArea.waitFor({ state: 'visible', timeout: 15000 });
             await headerArea.click({ timeout: 10000 });
-            await delay(sitesPage, 220);
-            await sitesPage.keyboard.press('Delete');
-        }, 'Delete Sites header by keyboard', 2);
-        await delay(sitesPage, 600);
-
-        const titleStillVisible = await headerTitleText.isVisible().catch(() => false);
-        if (titleStillVisible) {
-            console.log('[STEP] Header text still visible, trying trash button fallback...');
-            await retryAction(async () => {
-                await headerArea.click({ timeout: 10000 });
-                await delay(sitesPage, 250);
-                await deleteHeaderBtn.waitFor({ state: 'visible', timeout: 12000 });
-                await deleteHeaderBtn.click({ timeout: 10000 });
-            }, 'Delete Sites header by trash button', 3);
-            await delay(sitesPage, 700);
-        } else {
-            console.log('[STEP] Header cleared by Delete key.');
-        }
+            await delay(sitesPage, 320);
+            await deleteHeaderBtn.waitFor({ state: 'visible', timeout: 15000 });
+            await deleteHeaderBtn.click({ timeout: 10000 });
+        }, 'Delete Sites header by trash button', 4);
+        await delay(sitesPage, 900);
     } else {
         console.log('[STEP] Sites header area not visible, skip header cleanup.');
     }
 
-    const contentTarget = sitesPage.locator(
-        'div[contenteditable="true"][role="textbox"], div[contenteditable="true"][aria-label="Text"], h1 span.C9DxTc'
+    let contentTarget = sitesPage.locator(
+        'xpath=(//div[@contenteditable="true" and @role="textbox" and not(ancestor::section[@data-header="true"])])[1]'
     ).first();
+    if (!(await contentTarget.isVisible().catch(() => false))) {
+        const canvas = sitesPage.locator('article.UynGwb, article[guidedhelpid], article').first();
+        await canvas.waitFor({ state: 'visible', timeout: 30000 });
+        await canvas.click({ timeout: 10000, position: { x: 300, y: 460 } }).catch(() => { });
+        await delay(sitesPage, 400);
+        contentTarget = sitesPage.locator(
+            'div[contenteditable="true"][role="textbox"], div[contenteditable="true"][aria-label="Text"]'
+        ).first();
+    }
     await contentTarget.waitFor({ state: 'visible', timeout: 120000 });
     await contentTarget.click({ timeout: 10000 });
     await delay(sitesPage, 280);
