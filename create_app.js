@@ -1188,10 +1188,32 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     await sitesPage.goto('https://sites.google.com/new', { timeout: 120000, waitUntil: 'domcontentloaded' });
     await sitesPage.waitForLoadState('load', { timeout: 120000 }).catch(() => { });
     await sitesPage.waitForLoadState('networkidle', { timeout: 120000 }).catch(() => { });
-    console.log('[STEP] Waiting Google Sites ready window (15-20s)...');
-    await randomDelay(sitesPage, 15000, 20000);
+    console.log('[STEP] Waiting Google Sites ready window (5-10s)...');
+    await randomDelay(sitesPage, 5000, 10000);
 
-    const titleInput = sitesPage.locator('#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd').first();
+    const titleInput = sitesPage.locator(
+        '#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd, input[aria-label*="site name" i], input[placeholder*="site name" i]'
+    ).first();
+
+    // sites.google.com/new often lands on template chooser. Enter editor by clicking Blank site first.
+    if (!(await titleInput.isVisible().catch(() => false))) {
+        console.log('[STEP] Sites template chooser detected, clicking Blank site...');
+        const blankSiteCard = sitesPage
+            .locator('div[role="option"], div.docs-homescreen-templates-templateview')
+            .filter({ hasText: /Blank site|空白站点|空白网站|空白/i })
+            .first();
+
+        await retryAction(async () => {
+            await blankSiteCard.waitFor({ state: 'visible', timeout: 60000 });
+            await blankSiteCard.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => { });
+            await blankSiteCard.click({ timeout: 10000 });
+        }, 'Click Sites Blank site', 3);
+
+        await sitesPage.waitForLoadState('domcontentloaded', { timeout: 120000 }).catch(() => { });
+        await sitesPage.waitForLoadState('networkidle', { timeout: 120000 }).catch(() => { });
+        await randomDelay(sitesPage, 5000, 10000);
+    }
+
     await titleInput.waitFor({ state: 'visible', timeout: 120000 });
     await titleInput.click({ clickCount: 2, timeout: 10000 });
     await titleInput.fill(task.appName);
