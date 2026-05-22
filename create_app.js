@@ -2177,23 +2177,29 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 return !disabled;
             };
 
-            const getNoRadio = () => {
-                return page.locator('material-radio').filter({
-                    has: page.locator('label')
-                }).filter({
-                    hasText: /^\s*No\s*$/i
+            const clickScopedButton = async (locator, label) => {
+                await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                await locator.click({ timeout: 10000 });
+                console.log(`[DATA SAFETY] Clicked ${label}.`);
+                await delay(page, 3000);
+            };
+
+            const getNoLocators = () => {
+                const dataCollectionStep = page.locator('step-data-collection').first();
+                const noRadio = dataCollectionStep.locator('material-radio').filter({
+                    has: page.locator('label').filter({ hasText: /^\s*No\s*$/i })
                 }).first();
+                const noLabel = noRadio.locator('label').filter({ hasText: /^\s*No\s*$/i }).first();
+                const noBackground = noRadio.locator('.mdc-radio__background').first();
+                const noInput = noRadio.locator('input[type="radio"]').first();
+                return { dataCollectionStep, noRadio, noLabel, noBackground, noInput };
             };
 
             const isNoSelected = async () => {
-                let noRadio = getNoRadio();
-                let visible = await noRadio.isVisible().catch(() => false);
-                if (!visible) {
-                    noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^\s*No\s*$/i }).first();
-                    visible = await noRadio.isVisible().catch(() => false);
-                }
-                if (!visible) return false;
-                const byInput = await noRadio.locator('input[type="radio"]').first().isChecked().catch(() => false);
+                const { noRadio, noInput } = getNoLocators();
+                const radioVisible = await noRadio.isVisible().catch(() => false);
+                if (!radioVisible) return false;
+                const byInput = await noInput.isChecked().catch(() => false);
                 if (byInput) return true;
                 return await noRadio.evaluate((el) => {
                     const input = el.querySelector('input[type="radio"]');
@@ -2203,7 +2209,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }).catch(() => false);
             };
 
-            for (let i = 0; i < 12; i++) {
+            for (let i = 0; i < 30; i++) {
                 const nextBtn = page.locator(
                     'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next"), button[debug-id="button-next"]'
                 ).first();
@@ -2211,42 +2217,55 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
                 ).first();
 
-                let noRadio = getNoRadio();
-                let noVisible = await noRadio.isVisible().catch(() => false);
-                if (!noVisible) {
-                    noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^\s*No\s*$/i }).first();
-                    noVisible = await noRadio.isVisible().catch(() => false);
-                }
-
+                const { dataCollectionStep, noLabel, noBackground, noInput, noRadio } = getNoLocators();
+                const stepVisible = await dataCollectionStep.isVisible().catch(() => false);
+                const noVisible = stepVisible && await noRadio.isVisible().catch(() => false);
                 if (noVisible) {
                     if (!(await isNoSelected())) {
-                        await noRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-                        const label = noRadio.locator('label').filter({ hasText: /^\s*No\s*$/i }).first();
-                        if (await label.isVisible().catch(() => false)) {
-                            await label.click({ timeout: 10000 });
+                        await noRadio.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => { });
+                        await delay(page, 1000);
+
+                        if (await noLabel.isVisible().catch(() => false)) {
+                            await noLabel.click({ timeout: 10000, force: true });
+                        } else if (await noBackground.isVisible().catch(() => false)) {
+                            await noBackground.click({ timeout: 10000, force: true });
+                        } else if (await noInput.isVisible().catch(() => false)) {
+                            await noInput.click({ timeout: 10000, force: true });
                         } else {
-                            const control = noRadio.locator('.mdc-radio, [role="radio"], input[type="radio"]').first();
-                            if (await control.isVisible().catch(() => false)) {
-                                await control.click({ timeout: 10000 });
-                            } else {
-                                await noRadio.click({ timeout: 10000 });
-                            }
+                            await noRadio.click({ timeout: 10000, force: true });
                         }
-                        await delay(page, 1200);
+
+                        // DOM fallback for dynamic wrappers.
+                        if (!(await isNoSelected())) {
+                            await page.evaluate(() => {
+                                const root = document.querySelector('step-data-collection') || document;
+                                const labels = Array.from(root.querySelectorAll('material-radio label'));
+                                const no = labels.find((l) => (l.textContent || '').trim().toLowerCase() === 'no');
+                                if (!no) return;
+                                const radio = no.closest('material-radio');
+                                if (!radio) return;
+                                const input = radio.querySelector('input[type="radio"]');
+                                if (input && !input.checked) input.click();
+                                no.click();
+                            }).catch(() => { });
+                        }
+
+                        await delay(page, 1500);
                         if (!(await isNoSelected())) {
                             throw new Error('Data safety "No" radio click did not take effect.');
                         }
+                        console.log('[DATA SAFETY] "No" selected.');
                     }
                 }
 
                 // Follow document flow first: Next -> answer No if asked -> Next ... -> Save at end.
                 if (await isButtonEnabled(nextBtn)) {
-                    await clickMainButton('Next');
+                    await clickScopedButton(nextBtn, 'Next');
                     continue;
                 }
 
                 if (await isButtonEnabled(saveBtn)) {
-                    await clickMainButton('Save');
+                    await clickScopedButton(saveBtn, 'Save');
                     await waitSaved(page);
                     markStepDone(PROGRESS_STEP_SAFETY_DONE);
                     return;
