@@ -2112,7 +2112,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 if (clickedResult.clicked) {
                     noSelectedCount += 1;
                     console.log(`[QUESTIONNAIRE] Selected "No" (${noSelectedCount}) for group ${clickedResult.groupIndex}/${clickedResult.totalGroups}.`);
-                    await delayRandom(page, 2000, 3000);
+                    await randomDelay(page, 2000, 3000);
                     continue;
                 }
 
