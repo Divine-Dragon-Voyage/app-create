@@ -1941,29 +1941,55 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_PRIVACY_DONE);
         }
 
-        async function clickNoOptionInFirstUncheckedRadioGroup() {
-            const clicked = await page.evaluate(() => {
+        async function selectNoInUncheckedRadioGroups() {
+            const clickedCount = await page.evaluate(() => {
                 const groups = Array.from(document.querySelectorAll('material-radio-group'));
+                let clicked = 0;
+
+                const hasChecked = (group) => {
+                    return !!group.querySelector(
+                        'input[type="radio"]:checked, [role="radio"][aria-checked="true"], input[aria-checked="true"]'
+                    );
+                };
+
                 for (const group of groups) {
-                    const hasChecked = !!group.querySelector('input[type="radio"]:checked, [role="radio"][aria-checked="true"]');
-                    if (hasChecked) continue;
+                    if (hasChecked(group)) continue;
 
                     const radios = Array.from(group.querySelectorAll('material-radio, [role="radio"]'));
                     if (!radios.length) continue;
 
-                    let target = radios.find(r => /\bNo\b/i.test((r.textContent || '').trim()));
+                    let target = radios.find((r) => /\bNo\b/i.test((r.textContent || '').trim()));
                     if (!target && radios.length >= 2) {
                         target = radios[1];
                     }
                     if (!target) continue;
 
-                    const clickable = target.querySelector('input[type="radio"], .mdc-radio, [role="radio"]') || target;
+                    const label = target.querySelector('label');
+                    const input = target.querySelector('input[type="radio"]');
+                    const clickable = label || input || target.querySelector('.mdc-radio, [role="radio"]') || target;
                     clickable.click();
-                    return true;
+                    clicked += 1;
                 }
-                return false;
+
+                return clicked;
             });
-            return !!clicked;
+
+            return Number(clickedCount || 0);
+        }
+
+        async function getUncheckedRadioGroupCount() {
+            const count = await page.evaluate(() => {
+                const groups = Array.from(document.querySelectorAll('material-radio-group'));
+                let remaining = 0;
+                for (const group of groups) {
+                    const hasChecked = !!group.querySelector(
+                        'input[type="radio"]:checked, [role="radio"][aria-checked="true"], input[aria-checked="true"]'
+                    );
+                    if (!hasChecked) remaining += 1;
+                }
+                return remaining;
+            }).catch(() => 0);
+            return Number(count || 0);
         }
 
         async function runContentRatingsStep() {
@@ -2070,50 +2096,51 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Accept terms and conditions', 3);
             await clickMainButton('Next');
 
-            let reachedSave = false;
-            for (let i = 0; i < 40; i++) {
+            let questionnaireSaved = false;
+            for (let i = 0; i < 60; i++) {
+                const clickedCount = await selectNoInUncheckedRadioGroups();
+                if (clickedCount > 0) {
+                    console.log(`[QUESTIONNAIRE] Selected "No" for ${clickedCount} group(s).`);
+                    await delay(page, 3000);
+                    continue;
+                }
+
+                const remainingGroups = await getUncheckedRadioGroupCount();
+                if (remainingGroups > 0) {
+                    await page.mouse.wheel(0, 800).catch(() => { });
+                    await delay(page, 2000);
+                    continue;
+                }
+
                 const saveBtn = page.locator(
                     'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
                 ).first();
                 if (await saveBtn.isVisible().catch(() => false)) {
-                    reachedSave = true;
+                    await clickMainButton('Save');
+                    await waitSaved(page);
+                    questionnaireSaved = true;
                     break;
                 }
 
-                const clickedNo = await clickNoOptionInFirstUncheckedRadioGroup();
-                if (clickedNo) {
-                    await delay(page, 1200);
-                    continue;
-                }
-
-                const nextBtn = page.locator(
-                    'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next")'
-                ).first();
-                if (await nextBtn.isVisible().catch(() => false)) {
-                    await clickMainButton('Next');
-                    continue;
-                }
-
-                await page.mouse.wheel(0, 800).catch(() => { });
-                await delay(page, 1000);
+                await page.mouse.wheel(0, 600).catch(() => { });
+                await delay(page, 2000);
             }
 
-            if (!reachedSave) {
-                throw new Error('Content ratings questionnaire did not reach Save state.');
+            if (!questionnaireSaved) {
+                throw new Error('Content ratings questionnaire did not complete all No selections / Save.');
             }
-
-            await clickMainButton('Save');
-            await waitSaved(page);
 
             const nextAfterSave = page.locator(
                 'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next")'
             ).first();
             if (await nextAfterSave.isVisible().catch(() => false)) {
+                await delay(page, 3000);
                 await clickMainButton('Next');
                 const finalSave = page.locator(
                     'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
                 ).first();
                 if (await finalSave.isVisible().catch(() => false)) {
+                    await delay(page, 3000);
                     await clickMainButton('Save');
                     await waitSaved(page);
                 }
