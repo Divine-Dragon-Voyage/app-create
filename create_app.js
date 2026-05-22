@@ -2177,9 +2177,21 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 return !disabled;
             };
 
+            const getNoRadio = () => {
+                return page.locator('material-radio').filter({
+                    has: page.locator('label')
+                }).filter({
+                    hasText: /^\s*No\s*$/i
+                }).first();
+            };
+
             const isNoSelected = async () => {
-                const noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^No\b/i }).first();
-                const visible = await noRadio.isVisible().catch(() => false);
+                let noRadio = getNoRadio();
+                let visible = await noRadio.isVisible().catch(() => false);
+                if (!visible) {
+                    noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^\s*No\s*$/i }).first();
+                    visible = await noRadio.isVisible().catch(() => false);
+                }
                 if (!visible) return false;
                 const byInput = await noRadio.locator('input[type="radio"]').first().isChecked().catch(() => false);
                 if (byInput) return true;
@@ -2199,17 +2211,31 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
                 ).first();
 
-                const noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^No\b/i }).first();
-                if (await noRadio.isVisible().catch(() => false)) {
+                let noRadio = getNoRadio();
+                let noVisible = await noRadio.isVisible().catch(() => false);
+                if (!noVisible) {
+                    noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^\s*No\s*$/i }).first();
+                    noVisible = await noRadio.isVisible().catch(() => false);
+                }
+
+                if (noVisible) {
                     if (!(await isNoSelected())) {
                         await noRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-                        const label = noRadio.locator('label:has-text("No")').first();
+                        const label = noRadio.locator('label').filter({ hasText: /^\s*No\s*$/i }).first();
                         if (await label.isVisible().catch(() => false)) {
                             await label.click({ timeout: 10000 });
                         } else {
-                            await noRadio.click({ timeout: 10000 });
+                            const control = noRadio.locator('.mdc-radio, [role="radio"], input[type="radio"]').first();
+                            if (await control.isVisible().catch(() => false)) {
+                                await control.click({ timeout: 10000 });
+                            } else {
+                                await noRadio.click({ timeout: 10000 });
+                            }
                         }
                         await delay(page, 1200);
+                        if (!(await isNoSelected())) {
+                            throw new Error('Data safety "No" radio click did not take effect.');
+                        }
                     }
                 }
 
