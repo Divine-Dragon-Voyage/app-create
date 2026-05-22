@@ -1291,7 +1291,7 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     }
 
     await sitesPage.keyboard.press('Control+V');
-    await delay(sitesPage, 1000);
+    await delay(sitesPage, 3000);
     console.log('[COPY] Privacy text pasted into Sites editor.');
 
     const topPublishBtn = sitesPage.locator(
@@ -1301,7 +1301,7 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
         await topPublishBtn.waitFor({ state: 'visible', timeout: 60000 });
         await topPublishBtn.click({ timeout: 10000 });
     }, 'Click Sites Publish(top)', 3);
-    await delay(sitesPage, 2000);
+    await delay(sitesPage, 3000);
 
     const publishDialog = sitesPage.locator('div[role="dialog"], div[aria-modal="true"]')
         .filter({ hasText: /Publish to the web|Web address|发布/i })
@@ -1321,7 +1321,7 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
         });
-        await delay(sitesPage, 1200);
+        await delay(sitesPage, 3000);
 
         const unavailableHint = publishDialog.locator("text=/unavailable|already exists|can't|invalid|已被使用|不可用|无效/i").first();
         if (await unavailableHint.isVisible().catch(() => false)) {
@@ -1991,19 +1991,83 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 'Content ratings email'
             );
 
+            console.log('Selecting category: All Other App Types...');
             await retryAction(async () => {
-                const appTypeRadio = page.locator('material-radio, [role="radio"]').filter({
-                    hasText: /All other App Types/i
+                const appTypeRadio = page.locator('material-radio').filter({
+                    hasText: /All\s*Other\s*App\s*Types/i
                 }).first();
                 if (!(await appTypeRadio.isVisible().catch(() => false))) {
-                    throw new Error('All other App Types radio not visible.');
+                    throw new Error('All Other App Types radio not visible.');
                 }
+
+                const isChecked = async () => {
+                    const byInput = await appTypeRadio.locator('input[type="radio"]').first().isChecked().catch(() => false);
+                    if (byInput) return true;
+                    const byAria = await appTypeRadio.evaluate((el) => {
+                        const input = el.querySelector('input[type="radio"]');
+                        if (input && input.checked) return true;
+                        if (el.getAttribute('aria-checked') === 'true') return true;
+                        return !!el.querySelector('[role="radio"][aria-checked="true"], input[aria-checked="true"]');
+                    }).catch(() => false);
+                    return !!byAria;
+                };
+
                 await appTypeRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-                await appTypeRadio.click({ timeout: 10000 });
-                await delay(page, 1000);
+                if (!(await isChecked())) {
+                    const label = appTypeRadio.locator('label:has-text("All Other App Types")').first();
+                    if (await label.isVisible().catch(() => false)) {
+                        await label.click({ timeout: 10000 });
+                    } else {
+                        await appTypeRadio.click({ timeout: 10000 });
+                    }
+                    await delay(page, 1000);
+                }
+
+                if (!(await isChecked())) {
+                    const control = appTypeRadio.locator('input[type="radio"], .mdc-radio, [role="radio"]').first();
+                    if (await control.isVisible().catch(() => false)) {
+                        await control.click({ timeout: 10000 });
+                        await delay(page, 1000);
+                    }
+                }
+
+                if (!(await isChecked())) {
+                    throw new Error('All Other App Types radio still unchecked.');
+                }
             }, 'Select All other App Types', 3);
 
-            await selectCheckbox(/terms|conditions/i);
+            console.log('Checking terms and conditions...');
+            await retryAction(async () => {
+                const termsCheckbox = page.locator('material-checkbox, [role="checkbox"]').filter({
+                    hasText: /Terms of Use|terms|conditions/i
+                }).first();
+                if (!(await termsCheckbox.isVisible().catch(() => false))) {
+                    throw new Error('Terms/conditions checkbox not visible.');
+                }
+
+                await termsCheckbox.scrollIntoViewIfNeeded({ timeout: 10000 });
+                const input = termsCheckbox.locator('input[type="checkbox"]').first();
+                let checked = await input.isChecked().catch(() => false);
+                if (!checked) {
+                    await termsCheckbox.click({ timeout: 10000 });
+                    await delay(page, 1000);
+                    checked = await input.isChecked().catch(() => false);
+                }
+
+                if (!checked) {
+                    const ariaChecked = await termsCheckbox.evaluate((el) => {
+                        const checkbox = el.querySelector('[role="checkbox"]');
+                        if (checkbox && checkbox.getAttribute('aria-checked') === 'true') return true;
+                        const inputEl = el.querySelector('input[type="checkbox"]');
+                        return !!(inputEl && inputEl.checked);
+                    }).catch(() => false);
+                    checked = !!ariaChecked;
+                }
+
+                if (!checked) {
+                    throw new Error('Terms/conditions checkbox still unchecked.');
+                }
+            }, 'Accept terms and conditions', 3);
             await clickMainButton('Next');
 
             let reachedSave = false;
