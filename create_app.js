@@ -1941,10 +1941,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_PRIVACY_DONE);
         }
 
-        async function selectNoInUncheckedRadioGroups() {
-            const clickedCount = await page.evaluate(() => {
+        async function selectNoInFirstUncheckedRadioGroup() {
+            const result = await page.evaluate(() => {
                 const groups = Array.from(document.querySelectorAll('material-radio-group'));
-                let clicked = 0;
 
                 const hasChecked = (group) => {
                     return !!group.querySelector(
@@ -1952,7 +1951,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     );
                 };
 
-                for (const group of groups) {
+                for (let i = 0; i < groups.length; i++) {
+                    const group = groups[i];
                     if (hasChecked(group)) continue;
 
                     const radios = Array.from(group.querySelectorAll('material-radio, [role="radio"]'));
@@ -1968,13 +1968,22 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     const input = target.querySelector('input[type="radio"]');
                     const clickable = label || input || target.querySelector('.mdc-radio, [role="radio"]') || target;
                     clickable.click();
-                    clicked += 1;
+
+                    return {
+                        clicked: true,
+                        groupIndex: i + 1,
+                        totalGroups: groups.length
+                    };
                 }
 
-                return clicked;
+                return {
+                    clicked: false,
+                    groupIndex: 0,
+                    totalGroups: groups.length
+                };
             });
 
-            return Number(clickedCount || 0);
+            return result || { clicked: false, groupIndex: 0, totalGroups: 0 };
         }
 
         async function getUncheckedRadioGroupCount() {
@@ -2097,11 +2106,13 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickMainButton('Next');
 
             let questionnaireSaved = false;
+            let noSelectedCount = 0;
             for (let i = 0; i < 60; i++) {
-                const clickedCount = await selectNoInUncheckedRadioGroups();
-                if (clickedCount > 0) {
-                    console.log(`[QUESTIONNAIRE] Selected "No" for ${clickedCount} group(s).`);
-                    await delay(page, 3000);
+                const clickedResult = await selectNoInFirstUncheckedRadioGroup();
+                if (clickedResult.clicked) {
+                    noSelectedCount += 1;
+                    console.log(`[QUESTIONNAIRE] Selected "No" (${noSelectedCount}) for group ${clickedResult.groupIndex}/${clickedResult.totalGroups}.`);
+                    await delayRandom(page, 2000, 3000);
                     continue;
                 }
 
@@ -2116,6 +2127,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
                 ).first();
                 if (await saveBtn.isVisible().catch(() => false)) {
+                    console.log(`[QUESTIONNAIRE] Selected "No" for ${noSelectedCount} group(s).`);
                     await clickMainButton('Save');
                     await waitSaved(page);
                     questionnaireSaved = true;
@@ -2154,34 +2166,68 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log('Executing declaration 10/10: Data safety...');
             await clickStartDeclaration('Data safety');
 
+            const isButtonEnabled = async (locator) => {
+                const visible = await locator.isVisible().catch(() => false);
+                if (!visible) return false;
+                const disabled = await locator.evaluate((el) => {
+                    return el.hasAttribute('disabled') ||
+                        el.classList.contains('mdc-button--disabled') ||
+                        el.getAttribute('aria-disabled') === 'true';
+                }).catch(() => true);
+                return !disabled;
+            };
+
+            const isNoSelected = async () => {
+                const noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^No\b/i }).first();
+                const visible = await noRadio.isVisible().catch(() => false);
+                if (!visible) return false;
+                const byInput = await noRadio.locator('input[type="radio"]').first().isChecked().catch(() => false);
+                if (byInput) return true;
+                return await noRadio.evaluate((el) => {
+                    const input = el.querySelector('input[type="radio"]');
+                    if (input && input.checked) return true;
+                    if (el.getAttribute('aria-checked') === 'true') return true;
+                    return !!el.querySelector('[role="radio"][aria-checked="true"], input[aria-checked="true"]');
+                }).catch(() => false);
+            };
+
             for (let i = 0; i < 12; i++) {
-                const saveBtn = page.locator(
-                    'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save")'
+                const nextBtn = page.locator(
+                    'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next"), button[debug-id="button-next"]'
                 ).first();
-                if (await saveBtn.isVisible().catch(() => false)) {
+                const saveBtn = page.locator(
+                    'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
+                ).first();
+
+                const noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^No\b/i }).first();
+                if (await noRadio.isVisible().catch(() => false)) {
+                    if (!(await isNoSelected())) {
+                        await noRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                        const label = noRadio.locator('label:has-text("No")').first();
+                        if (await label.isVisible().catch(() => false)) {
+                            await label.click({ timeout: 10000 });
+                        } else {
+                            await noRadio.click({ timeout: 10000 });
+                        }
+                        await delay(page, 1200);
+                    }
+                }
+
+                // Follow document flow first: Next -> answer No if asked -> Next ... -> Save at end.
+                if (await isButtonEnabled(nextBtn)) {
+                    await clickMainButton('Next');
+                    continue;
+                }
+
+                if (await isButtonEnabled(saveBtn)) {
                     await clickMainButton('Save');
                     await waitSaved(page);
                     markStepDone(PROGRESS_STEP_SAFETY_DONE);
                     return;
                 }
 
-                const noRadio = page.locator('material-radio, [role="radio"]').filter({ hasText: /^No\b/i }).first();
-                if (await noRadio.isVisible().catch(() => false)) {
-                    await noRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-                    await noRadio.click({ timeout: 10000 });
-                    await delay(page, 1200);
-                }
-
-                const nextBtn = page.locator(
-                    'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next")'
-                ).first();
-                if (await nextBtn.isVisible().catch(() => false)) {
-                    await clickMainButton('Next');
-                    continue;
-                }
-
                 await page.mouse.wheel(0, 800).catch(() => { });
-                await delay(page, 1000);
+                await delay(page, 1500);
             }
 
             throw new Error('Data safety flow did not reach Save state.');
