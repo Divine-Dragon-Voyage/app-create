@@ -943,10 +943,7 @@ function buildSiteSlug(appName) {
         suffix += String(1 + Math.floor(Math.random() * 9)); // 1-9 only
     }
 
-    let candidate = `${safeBase}${suffix}`;
-    if (!/^[a-z]/.test(candidate)) {
-        candidate = `a${candidate}`;
-    }
+    const candidate = `${safeBase}${suffix}`;
     return candidate.slice(0, 31);
 }
 
@@ -2186,26 +2183,28 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
             const getNoLocators = () => {
                 const dataCollectionStep = page.locator('step-data-collection').first();
-                const noRadio = dataCollectionStep.locator('material-radio').filter({
-                    has: page.locator('label').filter({ hasText: /^\s*No\s*$/i })
-                }).first();
-                const noLabel = noRadio.locator('label').filter({ hasText: /^\s*No\s*$/i }).first();
-                const noBackground = noRadio.locator('.mdc-radio__background').first();
-                const noInput = noRadio.locator('input[type="radio"]').first();
-                return { dataCollectionStep, noRadio, noLabel, noBackground, noInput };
+                const noGroup = dataCollectionStep
+                    .locator('material-radio-group[debug-id="personal-data-no"]')
+                    .first();
+                const noRadio = noGroup.locator('material-radio').first();
+                const noLabel = noGroup.locator('label').filter({ hasText: /^\s*No\s*$/i }).first();
+                const noBackground = noGroup.locator('.mdc-radio__background').first();
+                const noInput = noGroup.locator('input[type="radio"][role="radio"]').first();
+                return { dataCollectionStep, noGroup, noRadio, noLabel, noBackground, noInput };
             };
 
             const isNoSelected = async () => {
-                const { noRadio, noInput } = getNoLocators();
-                const radioVisible = await noRadio.isVisible().catch(() => false);
-                if (!radioVisible) return false;
-                const byInput = await noInput.isChecked().catch(() => false);
-                if (byInput) return true;
-                return await noRadio.evaluate((el) => {
+                const { noGroup, noInput } = getNoLocators();
+                const groupVisible = await noGroup.isVisible().catch(() => false);
+                if (!groupVisible) return false;
+                const byInputChecked = await noInput.isChecked().catch(() => false);
+                if (byInputChecked) return true;
+                const byInputAria = await noInput.evaluate((el) => el.getAttribute('aria-checked') === 'true').catch(() => false);
+                if (byInputAria) return true;
+                return await noGroup.evaluate((el) => {
                     const input = el.querySelector('input[type="radio"]');
                     if (input && input.checked) return true;
-                    if (el.getAttribute('aria-checked') === 'true') return true;
-                    return !!el.querySelector('[role="radio"][aria-checked="true"], input[aria-checked="true"]');
+                    return !!el.querySelector('.mdc-radio--checked, [role="radio"][aria-checked="true"], input[aria-checked="true"], input[checked]');
                 }).catch(() => false);
             };
 
@@ -2217,20 +2216,20 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
                 ).first();
 
-                const { dataCollectionStep, noLabel, noBackground, noInput, noRadio } = getNoLocators();
+                const { dataCollectionStep, noGroup, noLabel, noBackground, noInput, noRadio } = getNoLocators();
                 const stepVisible = await dataCollectionStep.isVisible().catch(() => false);
-                const noVisible = stepVisible && await noRadio.isVisible().catch(() => false);
+                const noVisible = stepVisible && await noGroup.isVisible().catch(() => false);
                 if (noVisible) {
                     if (!(await isNoSelected())) {
-                        await noRadio.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => { });
+                        await noGroup.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => { });
                         await delay(page, 1000);
 
-                        if (await noLabel.isVisible().catch(() => false)) {
+                        if (await noInput.isVisible().catch(() => false)) {
+                            await noInput.click({ timeout: 10000, force: true });
+                        } else if (await noLabel.isVisible().catch(() => false)) {
                             await noLabel.click({ timeout: 10000, force: true });
                         } else if (await noBackground.isVisible().catch(() => false)) {
                             await noBackground.click({ timeout: 10000, force: true });
-                        } else if (await noInput.isVisible().catch(() => false)) {
-                            await noInput.click({ timeout: 10000, force: true });
                         } else {
                             await noRadio.click({ timeout: 10000, force: true });
                         }
@@ -2238,14 +2237,18 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         // DOM fallback for dynamic wrappers.
                         if (!(await isNoSelected())) {
                             await page.evaluate(() => {
-                                const root = document.querySelector('step-data-collection') || document;
-                                const labels = Array.from(root.querySelectorAll('material-radio label'));
-                                const no = labels.find((l) => (l.textContent || '').trim().toLowerCase() === 'no');
+                                const root = document.querySelector('step-data-collection material-radio-group[debug-id="personal-data-no"]');
+                                if (!root) return;
+                                const no = Array.from(root.querySelectorAll('label'))
+                                    .find((l) => (l.textContent || '').trim().toLowerCase() === 'no');
                                 if (!no) return;
-                                const radio = no.closest('material-radio');
-                                if (!radio) return;
-                                const input = radio.querySelector('input[type="radio"]');
-                                if (input && !input.checked) input.click();
+                                const targetId = no.getAttribute('for');
+                                const input = targetId ? document.getElementById(targetId) : root.querySelector('input[type="radio"]');
+                                if (input && !input.checked) {
+                                    input.click();
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
                                 no.click();
                             }).catch(() => { });
                         }
