@@ -2268,7 +2268,17 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }
 
                 if (await isButtonEnabled(saveBtn)) {
-                    await clickScopedButton(saveBtn, 'Save');
+                    await clickScopedButton(saveBtn, 'Save (1/2)');
+                    await waitSaved(page);
+                    await delay(page, 3000);
+
+                    const saveBtn2 = page.locator(
+                        'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
+                    ).first();
+                    if (!(await isButtonEnabled(saveBtn2))) {
+                        throw new Error('Data safety second Save is not enabled.');
+                    }
+                    await clickScopedButton(saveBtn2, 'Save (2/2)');
                     await waitSaved(page);
                     markStepDone(PROGRESS_STEP_SAFETY_DONE);
                     return;
