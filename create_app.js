@@ -2896,6 +2896,19 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 3000);
             };
 
+            const getMainSaveButton = () => page
+                .locator('button[debug-id="main-button"]')
+                .filter({ hasText: /^\s*Save\s*$/ })
+                .last();
+
+            const clickMainSaveButton = async (label) => {
+                const saveButton = getMainSaveButton();
+                await saveButton.waitFor({ state: 'visible', timeout: 15000 });
+                await clickLocatorRobust(saveButton, `Data safety ${label}`, 15000);
+                console.log(`[DATA SAFETY] Clicked ${label}.`);
+                await delay(page, 3000);
+            };
+
             const getNoLocators = () => {
                 const dataCollectionStep = page.locator('step-data-collection').first();
                 const noGroup = dataCollectionStep
@@ -2927,9 +2940,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 const nextBtn = page.locator(
                     'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next"), button[debug-id="button-next"]'
                 ).first();
-                const saveBtn = page.locator(
-                    'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
-                ).first();
+                const saveBtn = getMainSaveButton();
 
                 const { dataCollectionStep, noGroup, noLabel, noBackground, noInput, noRadio } = getNoLocators();
                 const stepVisible = await dataCollectionStep.isVisible().catch(() => false);
@@ -2983,33 +2994,17 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }
 
                 if (await isButtonEnabled(saveBtn)) {
-                    await clickScopedButton(saveBtn, 'Save (1/2)');
+                    await clickMainSaveButton('Save (1/2)');
                     await waitSaved(page);
                     await delay(page, 3000);
 
                     await retryAction(async () => {
-                        const saveBtn2 = page.locator(
-                            'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
-                        ).first();
-                        await saveBtn2.waitFor({ state: 'visible', timeout: 15000 });
-
-                        if (await isButtonEnabled(saveBtn2)) {
-                            await clickScopedButton(saveBtn2, 'Save (2/2)');
-                            await waitSaved(page);
-                            return;
-                        }
-
-                        throw new Error('Second Save button is still disabled.');
-                    }, 'Wait and click Data safety second Save', 4).catch(async (secondSaveError) => {
-                        console.log(`[DATA SAFETY] Second Save did not become enabled, trying one forced click: ${secondSaveError.message}`);
-                        const forcedSaveBtn = page.locator(
-                            'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
-                        ).first();
-                        await clickLocatorRobust(forcedSaveBtn, 'Data safety forced second Save button', 10000).catch((forceErr) => {
-                            console.log(`[DATA SAFETY] Forced second Save click skipped: ${forceErr.message}`);
-                        });
-                        await delay(page, 3000);
+                        await clickMainSaveButton('Save (2/2)');
+                    }, 'Click Data safety second Save', 3);
+                    await waitSaved(page).catch((secondSaveWaitError) => {
+                        console.log(`[DATA SAFETY] Second Save confirmation not detected after click; continuing: ${secondSaveWaitError.message}`);
                     });
+                    await delay(page, 3000);
 
                     markStepDone(PROGRESS_STEP_SAFETY_DONE);
                     return;
