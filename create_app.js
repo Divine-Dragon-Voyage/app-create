@@ -2369,6 +2369,22 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(targetPage, 3000);
         }
 
+        async function addSelectedStoreAssetsToListing(label) {
+            console.log(`[STORE LISTING] Adding selected ${label} assets to listing...`);
+            await retryAction(async () => {
+                const addButton = page.locator(
+                    'button[debug-id="add-to-content-button"], button[aria-label="Add"], [role="button"][debug-id="add-to-content-button"], [role="button"][aria-label="Add"]'
+                ).last();
+                await addButton.waitFor({ state: 'visible', timeout: 30000 });
+                if (await isLocatorDisabled(addButton)) {
+                    throw new Error(`${label} Add button is disabled.`);
+                }
+                await clickLocatorRobust(addButton, `${label} Add button`, 15000);
+            }, `Click ${label} Add button`, 3);
+            await randomDelay(page, 5000, 7000);
+            console.log(`[STORE LISTING] Selected ${label} assets added.`);
+        }
+
         async function clickStoreSectionEdit(sectionTitleRegex, label, fallbackMode = 'first') {
             const sectionEdit = page.locator('console-section, console-block-1-column, console-form-row, section').filter({
                 hasText: sectionTitleRegex
@@ -2457,6 +2473,31 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Click Store listing contact details Save', 3);
         }
 
+        async function closeStoreListingContactDialogIfVisible() {
+            const dialog = storeListingContactDialogLocator();
+            if (!(await dialog.isVisible().catch(() => false))) {
+                return;
+            }
+
+            console.log('[STORE SETTINGS] Closing Store listing contact details dialog...');
+            const closeBtn = dialog.locator(
+                'button[aria-label="Close"], button.close-icon-button, .close-icon-button, material-button[aria-label="Close"]'
+            ).first();
+
+            if (await closeBtn.isVisible().catch(() => false)) {
+                await clickLocatorRobust(closeBtn, 'Store listing contact details Close button', 15000);
+            } else {
+                await page.keyboard.press('Escape').catch(() => { });
+            }
+
+            await dialog.waitFor({ state: 'hidden', timeout: 15000 }).catch(async () => {
+                await page.keyboard.press('Escape').catch(() => { });
+                await delay(page, 2000);
+            });
+            await randomDelay(page, 5000, 7000);
+            console.log('[STORE SETTINGS] Store listing contact details dialog closed.');
+        }
+
         async function closePanelIfVisible() {
             const closeBtn = page.locator(
                 'button[aria-label="Close"], material-button[aria-label="Close"], .close-icon-button, button:has-text("Close")'
@@ -2518,7 +2559,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 2000, 3000);
             await clickStoreListingContactSave();
             await waitSaved(page);
-            await closePanelIfVisible();
+            await closeStoreListingContactDialogIfVisible();
+            await randomDelay(page, 5000, 7000);
             markStepDone(PROGRESS_STEP_STORE_SETTINGS_DONE);
         }
 
@@ -2594,16 +2636,21 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await uploadFilesByUploadButton(page, uploadBtn, imageFiles, 'Phone screenshots');
             console.log('[STORE LISTING] Phone screenshots uploaded, waiting for processing...');
             await randomDelay(page, 10000, 15000);
+            await addSelectedStoreAssetsToListing('Phone screenshots');
+            await randomDelay(page, 5000, 7000);
 
             const saveDraft = page.locator(
                 'button:has-text("Save as draft"), [debug-id="main-button"]:has-text("Save as draft"), button:has-text("Save")'
             ).last();
             if (await saveDraft.isVisible().catch(() => false) && !(await isLocatorDisabled(saveDraft))) {
                 console.log('[STORE LISTING] Saving store listing...');
+                await randomDelay(page, 5000, 7000);
                 await clickLocatorRobust(saveDraft, 'Store listing Save button', 10000);
                 await waitSaved(page);
+                await randomDelay(page, 5000, 7000);
             } else {
                 console.log('[STORE LISTING] Save button not enabled after upload, continuing with existing autosave state.');
+                await randomDelay(page, 5000, 7000);
             }
             markStepDone(PROGRESS_STEP_STORE_LISTING_DONE);
         }
@@ -2665,29 +2712,44 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
         async function runReleaseStep() {
             console.log('Executing item 13/13: Production release...');
+            console.log('[RELEASE] Downloading AAB package...');
             const aabPath = await downloadAabFromAppGenie();
+            await randomDelay(page, 5000, 7000);
 
+            console.log('[RELEASE] Opening Production page...');
             await gotoAppSubPage('/tracks/production', 'Production');
+            await randomDelay(page, 5000, 7000);
             const uploadButton = await openProductionReleaseEditor();
             const releaseUrl = page.url();
+            await randomDelay(page, 5000, 7000);
+
+            console.log('[RELEASE] Uploading AAB package...');
             await uploadFilesByUploadButton(page, uploadButton, [aabPath], 'AAB');
+            await randomDelay(page, 5000, 7000);
             await waitForAabUploadReady(300000);
+            await randomDelay(page, 5000, 7000);
 
+            console.log('[RELEASE] Updating Store settings category...');
             await setStoreCategoryFromAppGenieType();
+            await randomDelay(page, 5000, 7000);
 
+            console.log('[RELEASE] Returning to Production release editor...');
             await page.goto(releaseUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
-            await delay(page, 3000);
+            await randomDelay(page, 5000, 7000);
+            console.log('[RELEASE] Clicking Next...');
             await clickMainButton('Next');
-            await delay(page, 3000);
+            await randomDelay(page, 5000, 7000);
+            console.log('[RELEASE] Saving Production release...');
             await clickMainButton('Save');
-            await delay(page, 3000);
+            await randomDelay(page, 5000, 7000);
 
             const goOverview = page.locator(
                 'button[debug-id="yes-button"], button:has-text("Go to overview"), [role="button"]:has-text("Go to overview")'
             ).first();
             if (await goOverview.isVisible().catch(() => false)) {
+                console.log('[RELEASE] Going back to overview...');
                 await clickLocatorRobust(goOverview, 'Go to overview button', 10000);
-                await delay(page, 3000);
+                await randomDelay(page, 5000, 7000);
             }
 
             markStepDone(PROGRESS_STEP_RELEASE_DONE);
@@ -3062,6 +3124,13 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     await clickMainSaveButton('Save (1/2)');
                     await waitSaved(page);
                     await delay(page, 3000);
+
+                    const saveAfterFirst = getMainSaveButton();
+                    if (!(await isButtonEnabled(saveAfterFirst))) {
+                        console.log('[DATA SAFETY] Save button is disabled after first save; continuing to next step.');
+                        markStepDone(PROGRESS_STEP_SAFETY_DONE);
+                        return;
+                    }
 
                     await retryAction(async () => {
                         await clickMainSaveButton('Save (2/2)');
