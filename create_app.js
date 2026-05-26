@@ -2318,9 +2318,16 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             extractZipToDirectory(filePath, extractDir);
             console.log(`[APPGENIE] Images ZIP extracted: ${extractDir}`);
             await randomDelay(page, 10000, 15000);
-            const images = findImagesNamed(extractDir, ['1', '2', '3']);
-            console.log(`[APPGENIE] Store images ready: ${images.map(p => path.basename(p)).join(', ')}`);
-            return images;
+            const [appIcon] = findImagesNamed(extractDir, ['0']);
+            const [featureGraphic] = findImagesNamed(extractDir, ['1024']);
+            const phoneScreenshots = findImagesNamed(extractDir, ['1', '2', '3']);
+            console.log(
+                `[APPGENIE] Store images ready: ` +
+                `icon=${path.basename(appIcon)}, ` +
+                `feature=${path.basename(featureGraphic)}, ` +
+                `phone=${phoneScreenshots.map(p => path.basename(p)).join(', ')}`
+            );
+            return { appIcon, featureGraphic, phoneScreenshots };
         }
 
         async function downloadAabFromAppGenie() {
@@ -2383,6 +2390,94 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Click ${label} Add button`, 3);
             await randomDelay(page, 5000, 7000);
             console.log(`[STORE LISTING] Selected ${label} assets added.`);
+        }
+
+        async function selectStoreAssetsByFileNames(files, label) {
+            for (const file of files) {
+                const fileName = path.basename(file);
+                const fileNameText = page.locator(`text="${fileName}"`).last();
+                if (!(await fileNameText.isVisible().catch(() => false))) {
+                    console.log(`[STORE LISTING] ${label} asset ${fileName} not visible for manual selection.`);
+                    continue;
+                }
+
+                console.log(`[STORE LISTING] Selecting ${label} asset: ${fileName}`);
+                await clickLocatorRobust(fileNameText, `${label} asset ${fileName}`, 10000);
+                await randomDelay(page, 2000, 3000);
+            }
+        }
+
+        async function addSelectedStoreAssetsToListingWithFallback(label, files) {
+            console.log(`[STORE LISTING] Adding selected ${label} assets to listing...`);
+            await retryAction(async () => {
+                const addButton = page.locator(
+                    'button[debug-id="add-to-content-button"], button[aria-label="Add"], [role="button"][debug-id="add-to-content-button"], [role="button"][aria-label="Add"]'
+                ).last();
+                await addButton.waitFor({ state: 'visible', timeout: 30000 });
+                if (await isLocatorDisabled(addButton)) {
+                    console.log(`[STORE LISTING] ${label} Add button disabled; selecting uploaded file(s) first...`);
+                    await selectStoreAssetsByFileNames(files, label);
+                }
+                if (await isLocatorDisabled(addButton)) {
+                    throw new Error(`${label} Add button is disabled.`);
+                }
+                await clickLocatorRobust(addButton, `${label} Add button`, 15000);
+            }, `Click ${label} Add button`, 3);
+            await randomDelay(page, 5000, 7000);
+            console.log(`[STORE LISTING] Selected ${label} assets added.`);
+        }
+
+        async function openStoreListingAssetPanel(sectionLabel, uploaderDebugId, label) {
+            const sectionByAria = page.locator(`div[role="group"][aria-label="${sectionLabel}"]`).first();
+            const sectionByText = page.locator(
+                `xpath=(//*[contains(normalize-space(.), "${sectionLabel}")]/ancestor::*[@role="group"][1])[1]`
+            ).first();
+            const uploader = uploaderDebugId
+                ? page.locator(`localized-image-uploader[debug-id="${uploaderDebugId}"]`).first()
+                : page.locator(`div[role="group"][aria-label="${sectionLabel}"] localized-image-uploader`).first();
+            const scrollTarget = (await sectionByAria.isVisible().catch(() => false))
+                ? sectionByAria
+                : ((await sectionByText.isVisible().catch(() => false)) ? sectionByText : uploader);
+
+            await scrollTarget.scrollIntoViewIfNeeded({ timeout: 15000 }).catch(async () => {
+                await page.mouse.wheel(0, 900).catch(() => { });
+            });
+            await randomDelay(page, 4000, 6000);
+
+            const addByUploader = uploaderDebugId
+                ? page.locator(`localized-image-uploader[debug-id="${uploaderDebugId}"] button[debug-id="add-button"]`).first()
+                : page.locator(`div[role="group"][aria-label="${sectionLabel}"] button[debug-id="add-button"]`).first();
+            const addByAria = page.locator(`div[role="group"][aria-label="${sectionLabel}"] button:has-text("Add assets")`).first();
+            const addByXpath = page.locator(
+                `xpath=(//*[@role="group" and @aria-label="${sectionLabel}"]//button[contains(normalize-space(.), "Add assets")])[1]`
+            ).first();
+            const addByText = page.locator(
+                `xpath=(//*[contains(normalize-space(.), "${sectionLabel}")]/following::button[contains(normalize-space(.), "Add assets")])[1]`
+            ).first();
+
+            console.log(`[STORE LISTING] Opening ${label} asset panel...`);
+            await clickFirstVisibleOn(page, [addByUploader, addByAria, addByXpath, addByText], `${label} Add assets`, 5000);
+            await randomDelay(page, 5000, 7000);
+        }
+
+        async function uploadStoreListingGraphicAsset(sectionLabel, uploaderDebugId, files, label) {
+            const fileList = Array.isArray(files) ? files : [files];
+            if (!fileList.length || fileList.some(file => !file || !fs.existsSync(file))) {
+                throw new Error(`${label} upload file is missing.`);
+            }
+
+            await openStoreListingAssetPanel(sectionLabel, uploaderDebugId, label);
+
+            const uploadBtn = page.locator(
+                'button:has-text("Upload"), [role="button"]:has-text("Upload"), material-button:has-text("Upload")'
+            ).last();
+            console.log(`[STORE LISTING] Uploading ${label}: ${fileList.map(file => path.basename(file)).join(', ')}`);
+            await uploadFilesByUploadButton(page, uploadBtn, fileList, label);
+            console.log(`[STORE LISTING] ${label} uploaded, waiting for processing...`);
+            await randomDelay(page, 10000, 15000);
+            await addSelectedStoreAssetsToListingWithFallback(label, fileList);
+            await closePanelIfVisible();
+            await randomDelay(page, 5000, 7000);
         }
 
         async function clickStoreSectionEdit(sectionTitleRegex, label, fallbackMode = 'first') {
@@ -2610,7 +2705,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log('[STORE LISTING] Full description filled.');
             await delay(page, 5000);
 
-            const imageFiles = await downloadAndExtractStoreImages();
+            const storeImages = await downloadAndExtractStoreImages();
             await page.bringToFront().catch(() => { });
             await delay(page, 5000);
             console.log('[STORE LISTING] Moving to graphics section...');
@@ -2619,25 +2714,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             });
             await delay(page, 5000);
 
-            const phoneAddAssets = page.locator(
-                'xpath=(//*[contains(normalize-space(.), "Phone screenshots")]/following::button[contains(normalize-space(.), "Add assets")])[1]'
-            ).first();
-            const addAssetsFallback = page.locator(
-                'button:has-text("Add assets"), [role="button"]:has-text("Add assets"), material-button:has-text("Add assets")'
-            ).nth(1);
-            console.log('[STORE LISTING] Opening phone screenshots asset panel...');
-            await clickFirstVisibleOn(page, [phoneAddAssets, addAssetsFallback], 'Phone screenshots Add assets', 3000);
-            await delay(page, 5000);
-
-            const uploadBtn = page.locator(
-                'button:has-text("Upload"), [role="button"]:has-text("Upload"), material-button:has-text("Upload")'
-            ).last();
-            console.log('[STORE LISTING] Uploading phone screenshots...');
-            await uploadFilesByUploadButton(page, uploadBtn, imageFiles, 'Phone screenshots');
-            console.log('[STORE LISTING] Phone screenshots uploaded, waiting for processing...');
-            await randomDelay(page, 10000, 15000);
-            await addSelectedStoreAssetsToListing('Phone screenshots');
-            await randomDelay(page, 5000, 7000);
+            await uploadStoreListingGraphicAsset('App icon', 'icon-uploader', storeImages.appIcon, 'App icon');
+            await uploadStoreListingGraphicAsset('Feature graphic', 'feature-graphic-uploader', storeImages.featureGraphic, 'Feature graphic');
+            await uploadStoreListingGraphicAsset('Phone screenshots', 'phone-screenshots-uploader', storeImages.phoneScreenshots, 'Phone screenshots');
 
             const saveDraft = page.locator(
                 'button:has-text("Save as draft"), [debug-id="main-button"]:has-text("Save as draft"), button:has-text("Save")'
