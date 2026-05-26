@@ -1,6 +1,8 @@
 ﻿const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
+const { execFileSync } = require('child_process');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 
@@ -50,6 +52,9 @@ const PROGRESS_STEP_COUNTRY_DONE = 'COUNTRY_DONE';
 const PROGRESS_STEP_PRIVACY_DONE = 'PRIVACY_DONE';
 const PROGRESS_STEP_RATING_DONE = 'RATING_DONE';
 const PROGRESS_STEP_SAFETY_DONE = 'SAFETY_DONE';
+const PROGRESS_STEP_STORE_SETTINGS_DONE = 'STORE_SETTINGS_DONE';
+const PROGRESS_STEP_STORE_LISTING_DONE = 'STORE_LISTING_DONE';
+const PROGRESS_STEP_RELEASE_DONE = 'RELEASE_DONE';
 const PROGRESS_STEP_DONE = 'DONE';
 const PROGRESS_STEP_ORDER = [
     PROGRESS_STEP_APP_CREATED,
@@ -64,6 +69,9 @@ const PROGRESS_STEP_ORDER = [
     PROGRESS_STEP_PRIVACY_DONE,
     PROGRESS_STEP_RATING_DONE,
     PROGRESS_STEP_SAFETY_DONE,
+    PROGRESS_STEP_STORE_SETTINGS_DONE,
+    PROGRESS_STEP_STORE_LISTING_DONE,
+    PROGRESS_STEP_RELEASE_DONE,
     PROGRESS_STEP_DONE
 ];
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
@@ -851,6 +859,48 @@ async function retryAction(action, label = 'action', retries = 3) {
     }
 }
 
+async function clickLocatorRobust(locator, label = 'element', timeoutMs = 10000) {
+    await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+    await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+    try {
+        await locator.click({ timeout: timeoutMs });
+        return;
+    } catch (normalClickError) {
+        try {
+            await locator.click({ timeout: timeoutMs, force: true });
+            return;
+        } catch (forceClickError) {
+            try {
+                await locator.evaluate((el) => {
+                    if (typeof el.click === 'function') {
+                        el.click();
+                    } else {
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    }
+                });
+                return;
+            } catch (evaluateClickError) {
+                throw new Error(
+                    `${label} click failed. ` +
+                    `normal=${normalClickError.message}; ` +
+                    `force=${forceClickError.message}; ` +
+                    `evaluate=${evaluateClickError.message}`
+                );
+            }
+        }
+    }
+}
+
+async function isLocatorDisabled(locator) {
+    const visible = await locator.isVisible().catch(() => false);
+    if (!visible) return true;
+    return await locator.evaluate((el) => {
+        return el.hasAttribute('disabled') ||
+            el.classList.contains('mdc-button--disabled') ||
+            el.getAttribute('aria-disabled') === 'true';
+    }).catch(() => true);
+}
+
 async function waitSaved(page) {
     console.log('Waiting for save confirmation...');
     // Loosely match various "saved" messages (case-insensitive).
@@ -945,6 +995,124 @@ function buildSiteSlug(appName) {
 
     const candidate = `${safeBase}${suffix}`;
     return candidate.slice(0, 31);
+}
+
+function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function safeFileToken(value) {
+    return String(value || 'app')
+        .replace(/[^A-Za-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80) || 'app';
+}
+
+function escapePowerShellSingleQuotedString(value) {
+    return String(value || '').replace(/'/g, "''");
+}
+
+function extractZipToDirectory(zipPath, outputDir) {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+    fs.mkdirSync(outputDir, { recursive: true });
+    const command = [
+        `$zip='${escapePowerShellSingleQuotedString(zipPath)}'`,
+        `$out='${escapePowerShellSingleQuotedString(outputDir)}'`,
+        'Expand-Archive -LiteralPath $zip -DestinationPath $out -Force'
+    ].join('; ');
+    execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
+        { stdio: 'pipe' }
+    );
+}
+
+function collectFilesRecursive(rootDir) {
+    const files = [];
+    const walk = (dir) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                walk(fullPath);
+            } else if (entry.isFile()) {
+                files.push(fullPath);
+            }
+        }
+    };
+
+    if (fs.existsSync(rootDir)) {
+        walk(rootDir);
+    }
+    return files;
+}
+
+function findImagesNamed(rootDir, names = ['1', '2', '3']) {
+    const files = collectFilesRecursive(rootDir);
+    const imageExts = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+    return names.map((name) => {
+        const match = files.find((file) => {
+            const parsed = path.parse(file);
+            return parsed.name === name && imageExts.has(parsed.ext.toLowerCase());
+        });
+        if (!match) {
+            throw new Error(`Image file named "${name}" not found in extracted ZIP.`);
+        }
+        return match;
+    });
+}
+
+function normalizeAppGenieCardText(value) {
+    return String(value || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .trim();
+}
+
+function ensureTrailingSpace(value) {
+    const text = normalizeAppGenieCardText(value);
+    return text.endsWith(' ') ? text : `${text} `;
+}
+
+function shortenShortDescription(raw, maxLength = 80) {
+    let text = normalizeAppGenieCardText(raw).replace(/\s+/g, ' ');
+    if (text.length <= maxLength - 1) {
+        return ensureTrailingSpace(text);
+    }
+
+    const replacements = [
+        [/\bbrain-teasing\b/ig, 'clever'],
+        [/\blogic puzzle game\b/ig, 'logic puzzle'],
+        [/\bwhere you\b/ig, 'to'],
+        [/\bcontinuous paths\b/ig, 'paths'],
+        [/\busing\b/ig, 'with'],
+        [/\bexciting\b/ig, 'fun'],
+        [/\bchallenging\b/ig, 'smart']
+    ];
+    for (const [pattern, replacement] of replacements) {
+        text = text.replace(pattern, replacement).replace(/\s+/g, ' ');
+        if (text.length <= maxLength - 1) {
+            return ensureTrailingSpace(text);
+        }
+    }
+
+    const hardLimit = maxLength - 1;
+    let cut = text.slice(0, hardLimit);
+    const lastSpace = cut.lastIndexOf(' ');
+    if (lastSpace >= 45) {
+        cut = cut.slice(0, lastSpace);
+    }
+    cut = cut.replace(/[,\-:;]+$/g, '').trim();
+    if (!/[.!?]$/.test(cut)) {
+        cut += '.';
+    }
+    if (cut.length > hardLimit) {
+        cut = cut
+            .slice(0, hardLimit)
+            .replace(/\s+\S*$/, '')
+            .replace(/[,\-:;]+$/g, '')
+            .trim();
+    }
+    return ensureTrailingSpace(cut);
 }
 
 async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
@@ -1064,6 +1232,54 @@ async function ensureAppGenieOnMyTasks(appGeniePage) {
     }, 'Wait AppGenie 我的任务 page', 4);
 }
 
+function normalizeAppGenieTypeKey(typeLabel) {
+    const raw = String(typeLabel || '').trim();
+    if (!raw) {
+        return '';
+    }
+    if (/游戏|game/i.test(raw)) {
+        return 'game';
+    }
+    if (/应用|app|工具/i.test(raw)) {
+        return 'app';
+    }
+    return '';
+}
+
+async function readAppGenieTypeFromCard(appCard) {
+    const typeLabel = await appCard.evaluate((card) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+        // Primary: AppGenie type tag (e.g. <span class="ant-tag ant-tag-filled ant-tag-orange">游戏类</span>)
+        const primarySelectors = [
+            'span.ant-tag.ant-tag-filled.ant-tag-orange',
+            'span.ant-tag.ant-tag-orange'
+        ];
+        for (const selector of primarySelectors) {
+            const orangeTag = card.querySelector(selector);
+            if (orangeTag) {
+                const text = normalizeText(orangeTag.textContent);
+                if (text) {
+                    return text;
+                }
+            }
+        }
+
+        // Fallback: pick a type-like tag text from this card.
+        const tags = Array.from(card.querySelectorAll('span.ant-tag'));
+        for (const tag of tags) {
+            const text = normalizeText(tag.textContent);
+            if (/(类$)|游戏|工具|应用|game|app/i.test(text)) {
+                return text;
+            }
+        }
+
+        return '';
+    }).catch(() => '');
+
+    return String(typeLabel || '').trim();
+}
+
 async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions) {
     const { page: appGeniePage, source } = await acquireOrCreateAuxPage(
         context,
@@ -1092,9 +1308,9 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
             openBtn = emailRow.locator('button').last();
         }
         if (await openBtn.isVisible().catch(() => false)) {
-            await openBtn.click({ timeout: 10000 });
+            await clickLocatorRobust(openBtn, 'AppGenie View app button', 10000);
         } else {
-            await emailRow.click({ timeout: 10000 });
+            await clickLocatorRobust(emailRow, 'AppGenie task row', 10000);
         }
     }, 'Open AppGenie pending app drawer', 3);
 
@@ -1111,6 +1327,17 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     }
     await appCard.waitFor({ state: 'visible', timeout: 60000 });
 
+    // Capture current row type (e.g. 游戏类/应用类) before entering details page.
+    const appGenieTypeLabel = await readAppGenieTypeFromCard(appCard);
+    task.appGenieTypeLabel = appGenieTypeLabel;
+    task.appGenieTypeKey = normalizeAppGenieTypeKey(appGenieTypeLabel);
+    if (task.appGenieTypeLabel) {
+        const keyText = task.appGenieTypeKey ? ` -> ${task.appGenieTypeKey}` : '';
+        console.log(`[APPGENIE] Type detected: ${task.appGenieTypeLabel}${keyText}`);
+    } else {
+        console.log('[APPGENIE] Type tag not found on current app card.');
+    }
+
     const detailBtnByText = appCard.locator('button').filter({ hasText: /详\s*情|Detail/i }).first();
     const detailBtnFallback = appCard.locator('div[style*="border-top"] button.ant-btn').first();
 
@@ -1125,7 +1352,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         await detailBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
         // Slow down between View App and Details click.
         await randomDelay(appGeniePage, 3000, 6000);
-        await detailBtn.click({ timeout: 10000 });
+        await clickLocatorRobust(detailBtn, 'AppGenie Details button', 10000);
     }, 'Click AppGenie details button', 3);
 
     const popup = await popupPromise;
@@ -1160,7 +1387,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     let copied = false;
     const copyBtn = privacyCard.locator('button:has-text("复制"), button:has-text("Copy"), [role="button"]:has-text("复制"), [role="button"]:has-text("Copy")').first();
     if (await copyBtn.isVisible().catch(() => false)) {
-        copied = await copyBtn.click({ timeout: 10000 }).then(() => true).catch(() => false);
+        copied = await clickLocatorRobust(copyBtn, 'AppGenie privacy Copy button', 10000).then(() => true).catch(() => false);
     }
     if (!copied) {
         copied = await detailsPage.evaluate(async (text) => {
@@ -1178,7 +1405,9 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
         console.log('[COPY] Privacy text copy skipped/blocked, using captured text in memory.');
     }
 
-    // Keep detail page open for later reuse steps.
+    // Keep pages open for later reuse/download steps.
+    task.appGeniePage = appGeniePage;
+    task.appGenieDetailPage = detailsPage;
     return privacyText;
 }
 
@@ -1296,7 +1525,7 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     ).first();
     await retryAction(async () => {
         await topPublishBtn.waitFor({ state: 'visible', timeout: 60000 });
-        await topPublishBtn.click({ timeout: 10000 });
+        await clickLocatorRobust(topPublishBtn, 'Sites top Publish button', 10000);
     }, 'Click Sites Publish(top)', 3);
     await delay(sitesPage, 3000);
 
@@ -1313,11 +1542,18 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     let selectedSlug = '';
     for (let attempt = 1; attempt <= 5; attempt++) {
         selectedSlug = buildSiteSlug(task.appName);
-        await addressInput.fill(selectedSlug);
-        await addressInput.evaluate((el) => {
+        await addressInput.evaluate((el, slug) => {
+            el.focus();
+            el.value = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.value = slug;
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
-        });
+        }, selectedSlug);
+        const actualSlug = await addressInput.inputValue().catch(() => '');
+        if (actualSlug !== selectedSlug) {
+            await addressInput.fill(selectedSlug, { timeout: 10000 }).catch(() => { });
+        }
         await delay(sitesPage, 3000);
 
         const unavailableHint = publishDialog.locator("text=/unavailable|already exists|can't|invalid|已被使用|不可用|无效/i").first();
@@ -1335,9 +1571,9 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     ).last();
     await retryAction(async () => {
         await finalPublishBtn.waitFor({ state: 'visible', timeout: 60000 });
-        await finalPublishBtn.click({ timeout: 10000 });
+        await clickLocatorRobust(finalPublishBtn, 'Sites final Publish button', 10000);
     }, 'Click Sites Publish(final)', 3);
-    await delay(sitesPage, 3000);
+    await delay(sitesPage, 5000);
 
     // Try to copy the link from publish dialog. If not available, fallback to deterministic URL.
     const copyLinkBtn = sitesPage.locator('div[role="button"]:has-text("Copy link"), button:has-text("Copy link")').first();
@@ -1888,8 +2124,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 ).catch(() => false);
                 if (isDisabled) throw new Error(`Button "${text}" is disabled`);
 
-                await foundBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
-                await foundBtn.click({ timeout: 10000 });
+                await clickLocatorRobust(foundBtn, `"${text}" button`, 10000);
                 await delay(page, 3000);
             }, `Click "${text}" button`);
         }
@@ -1913,9 +2148,451 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Fill ${label}`);
         }
 
+        async function afterItem10Wait(ms = 3000) {
+            await delay(page, ms);
+        }
+
+        async function gotoAppSubPage(subPath, label, waitMs = 3000) {
+            console.log(`Navigating to "${label}"...`);
+            await page.bringToFront().catch(() => { });
+            await page.goto(appBasePath + subPath, { timeout: 120000, waitUntil: 'domcontentloaded' });
+            await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+            await delay(page, waitMs);
+        }
+
+        async function fillFirstVisibleInputOn(targetPage, selectors, value, label, waitMs = 3000) {
+            await retryAction(async () => {
+                let target = null;
+                for (const sel of selectors) {
+                    const loc = targetPage.locator(sel).first();
+                    if (await loc.isVisible().catch(() => false)) {
+                        target = loc;
+                        break;
+                    }
+                }
+                if (!target) {
+                    throw new Error(`${label} input not found.`);
+                }
+
+                await target.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                await target.fill(value, { timeout: 10000 }).catch(async () => {
+                    await target.evaluate((el, nextValue) => {
+                        el.focus();
+                        el.value = '';
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.value = nextValue;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }, value);
+                });
+                await delay(targetPage, waitMs);
+            }, `Fill ${label}`, 3);
+        }
+
+        async function clickFirstVisibleOn(targetPage, locators, label, waitMs = 3000) {
+            await retryAction(async () => {
+                let target = null;
+                for (const loc of locators) {
+                    if (await loc.isVisible().catch(() => false)) {
+                        target = loc;
+                        break;
+                    }
+                }
+                if (!target) {
+                    throw new Error(`${label} not found.`);
+                }
+                await clickLocatorRobust(target, label, 10000);
+                await delay(targetPage, waitMs);
+            }, `Click ${label}`, 3);
+        }
+
+        async function ensureAppGenieDetailPageReady() {
+            if (task.appGenieDetailPage && !task.appGenieDetailPage.isClosed()) {
+                await task.appGenieDetailPage.bringToFront().catch(() => { });
+                await delay(task.appGenieDetailPage, 3000);
+                return task.appGenieDetailPage;
+            }
+
+            // Re-open details if this run started after privacy step or Chrome recycled tabs.
+            await openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions);
+            if (!task.appGenieDetailPage || task.appGenieDetailPage.isClosed()) {
+                throw new Error('AppGenie detail page is not available for later steps.');
+            }
+            await task.appGenieDetailPage.bringToFront().catch(() => { });
+            await delay(task.appGenieDetailPage, 3000);
+            return task.appGenieDetailPage;
+        }
+
+        async function readAppGenieDetailCardText(titleRegex, label) {
+            const detailPage = await ensureAppGenieDetailPageReady();
+            let card = detailPage.locator('div.ant-card').filter({
+                has: detailPage.locator('.ant-card-head-title').filter({ hasText: titleRegex }).first()
+            }).first();
+
+            let text = '';
+            if (await card.isVisible().catch(() => false)) {
+                text = await card.locator('.ant-card-body').first().innerText().catch(() => '');
+            }
+
+            if (!String(text || '').trim()) {
+                text = await detailPage.evaluate(({ source, flags }) => {
+                    const titlePattern = new RegExp(source, flags);
+                    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                    const cards = Array.from(document.querySelectorAll('div.ant-card'));
+                    for (const candidate of cards) {
+                        const title = normalize(candidate.querySelector('.ant-card-head-title')?.textContent || '');
+                        if (!titlePattern.test(title)) continue;
+                        const body = candidate.querySelector('.ant-card-body');
+                        return String(body?.innerText || body?.textContent || '').trim();
+                    }
+                    return '';
+                }, { source: titleRegex.source, flags: titleRegex.flags || 'i' }).catch(() => '');
+            }
+
+            text = normalizeAppGenieCardText(text);
+            if (!text) {
+                throw new Error(`${label} not found on AppGenie details page.`);
+            }
+            return text;
+        }
+
+        async function saveDownloadToTemp(download, folderLabel, fallbackName) {
+            const root = path.join(
+                os.tmpdir(),
+                'app-create-downloads',
+                safeFileToken(`${task.appName}-${task.packageName}`),
+                `${safeFileToken(folderLabel)}-${Date.now()}`
+            );
+            fs.mkdirSync(root, { recursive: true });
+            const suggested = safeFileToken(download.suggestedFilename() || fallbackName);
+            const filePath = path.join(root, suggested || fallbackName);
+            await download.saveAs(filePath);
+            return { filePath, root };
+        }
+
+        async function downloadFromAppGenieDetail(buttonRegex, label, skipRegex = null) {
+            const detailPage = await ensureAppGenieDetailPageReady();
+            const candidates = detailPage.locator('button, a, [role="button"]').filter({ hasText: buttonRegex });
+            const count = await candidates.count().catch(() => 0);
+            let target = null;
+            for (let i = 0; i < count; i += 1) {
+                const loc = candidates.nth(i);
+                if (!(await loc.isVisible().catch(() => false))) continue;
+                const text = await loc.innerText().catch(() => '');
+                if (skipRegex && skipRegex.test(text)) continue;
+                target = loc;
+                break;
+            }
+            if (!target) {
+                throw new Error(`${label} download button not found on AppGenie details page.`);
+            }
+
+            console.log(`[APPGENIE] Downloading ${label}...`);
+            const downloadPromise = detailPage.waitForEvent('download', { timeout: 90000 });
+            await clickLocatorRobust(target, `${label} download button`, 10000);
+            return await downloadPromise;
+        }
+
+        async function downloadAndExtractStoreImages() {
+            const download = await downloadFromAppGenieDetail(/全部下载|Download\s*all|All\s*download/i, 'store images ZIP');
+            const { filePath, root } = await saveDownloadToTemp(download, 'images', `${safeFileToken(task.appName)}-images.zip`);
+            const extractDir = path.join(root, 'extract');
+            extractZipToDirectory(filePath, extractDir);
+            console.log(`[APPGENIE] Images ZIP extracted: ${extractDir}`);
+            await randomDelay(page, 10000, 15000);
+            const images = findImagesNamed(extractDir, ['1', '2', '3']);
+            console.log(`[APPGENIE] Store images ready: ${images.map(p => path.basename(p)).join(', ')}`);
+            return images;
+        }
+
+        async function downloadAabFromAppGenie() {
+            const detailPage = await ensureAppGenieDetailPageReady();
+            let download = null;
+
+            const aabCard = detailPage.locator('div.ant-card').filter({
+                has: detailPage.locator('.ant-card-head-title').filter({ hasText: /AAB|App\s*Bundle|应用包|安装包|包体/i }).first()
+            }).first();
+            if (await aabCard.isVisible().catch(() => false)) {
+                const btn = aabCard.locator('button, a, [role="button"]').filter({ hasText: /下载|Download|AAB|aab/i }).first();
+                if (await btn.isVisible().catch(() => false)) {
+                    console.log('[APPGENIE] Downloading AAB from AAB card...');
+                    const downloadPromise = detailPage.waitForEvent('download', { timeout: 90000 });
+                    await clickLocatorRobust(btn, 'AAB download button', 10000);
+                    download = await downloadPromise;
+                }
+            }
+
+            if (!download) {
+                download = await downloadFromAppGenieDetail(
+                    /AAB|aab|App\s*Bundle|应用包|安装包|包体|下载|Download/i,
+                    'AAB',
+                    /全部下载|Download\s*all|图片|image|zip/i
+                );
+            }
+
+            const saved = await saveDownloadToTemp(download, 'aab', `${safeFileToken(task.appName)}.aab`);
+            console.log(`[APPGENIE] AAB saved: ${saved.filePath}`);
+            return saved.filePath;
+        }
+
+        async function uploadFilesByUploadButton(targetPage, uploadButton, files, label) {
+            await retryAction(async () => {
+                const chooserPromise = targetPage.waitForEvent('filechooser', { timeout: 30000 }).catch(() => null);
+                await clickLocatorRobust(uploadButton, `${label} Upload button`, 10000);
+                const chooser = await chooserPromise;
+                if (chooser) {
+                    await chooser.setFiles(files);
+                    return;
+                }
+
+                const input = targetPage.locator('input[type="file"]').last();
+                await input.setInputFiles(files, { timeout: 30000 });
+            }, `Upload ${label}`, 3);
+            await delay(targetPage, 3000);
+        }
+
+        async function clickStoreSectionEdit(sectionTitleRegex, label, fallbackMode = 'first') {
+            const sectionEdit = page.locator('console-section, console-block-1-column, console-form-row, section').filter({
+                hasText: sectionTitleRegex
+            }).locator('material-button[debug-id="edit-store-listing-section-button"], button:has-text("Edit")').first();
+            const allEditButtons = page.locator(
+                'material-button[debug-id="edit-store-listing-section-button"], button:has-text("Edit"), [role="button"]:has-text("Edit")'
+            );
+            const fallback = fallbackMode === 'last' ? allEditButtons.last() : allEditButtons.first();
+            await clickFirstVisibleOn(page, [sectionEdit, fallback], `${label} Edit`, 3000);
+        }
+
+        async function closePanelIfVisible() {
+            const closeBtn = page.locator(
+                'button[aria-label="Close"], material-button[aria-label="Close"], .close-icon-button, button:has-text("Close")'
+            ).first();
+            if (await closeBtn.isVisible().catch(() => false)) {
+                await clickLocatorRobust(closeBtn, 'Close panel button', 10000);
+                await randomDelay(page, 2000, 3000);
+            }
+        }
+
+        async function selectDropdownByDebugId(debugId, optionRegex, label) {
+            const dropdown = page.locator(
+                `material-dropdown-select[debug-id="${debugId}"] dropdown-button, ` +
+                `material-dropdown-select[debug-id="${debugId}"] [role="button"]`
+            ).first();
+            await clickLocatorRobust(dropdown, `${label} dropdown`, 10000);
+            await delay(page, 1200);
+
+            const options = page.locator(
+                'material-select-dropdown-item, material-option, material-list-item, [role="option"], .mdc-list-item'
+            ).filter({ hasText: optionRegex });
+            const optionCount = await options.count().catch(() => 0);
+            let option = null;
+            for (let i = 0; i < optionCount; i += 1) {
+                const candidate = options.nth(i);
+                if (await candidate.isVisible().catch(() => false)) {
+                    option = candidate;
+                    break;
+                }
+            }
+            if (!option) {
+                throw new Error(`${label} option not found: ${optionRegex}`);
+            }
+            await clickLocatorRobust(option, `${label} option`, 10000);
+            await delay(page, 3000);
+        }
+
+        async function setStoreCategoryFromAppGenieType() {
+            const typeKey = task.appGenieTypeKey || normalizeAppGenieTypeKey(task.appGenieTypeLabel);
+            const isGame = typeKey === 'game';
+            const appOrGame = isGame ? 'Game' : 'App';
+            const category = isGame ? 'Casual' : 'Tools';
+            console.log(`[STORE SETTINGS] Setting App category from AppGenie type: ${task.appGenieTypeLabel || 'unknown'} -> ${appOrGame}/${category}`);
+
+            await gotoAppSubPage('/store-settings', 'Store settings for app category');
+            await clickStoreSectionEdit(/App\s*category|App or game|Category/i, 'App category', 'last');
+            await selectDropdownByDebugId('type-dropdown', new RegExp(`^\\s*${escapeRegExp(appOrGame)}\\s*$`, 'i'), 'App or game');
+            await selectDropdownByDebugId('category-dropdown', new RegExp(`^\\s*${escapeRegExp(category)}\\s*$`, 'i'), 'Category');
+            await clickMainButton('Save');
+            await waitSaved(page);
+            await closePanelIfVisible();
+        }
+
+        async function runStoreSettingsStep() {
+            console.log('Executing item 11/13: Store settings...');
+            await gotoAppSubPage('/store-settings', 'Store settings');
+            await clickStoreSectionEdit(/Store\s*listing\s*contact\s*details/i, 'Store listing contact details');
+            await randomDelay(page, 2000, 3000);
+            await fillFirstVisibleInputOn(page, [
+                'input[type="email"]',
+                'input[aria-label*="Email" i]',
+                'input[aria-label*="email" i]',
+                'input.mdc-text-field__input[type="text"]',
+                'input.mdc-text-field__input'
+            ], runtimeOptions.contactEmail, 'Store listing contact email', 2500);
+            await randomDelay(page, 2000, 3000);
+            await clickMainButton('Save');
+            await waitSaved(page);
+            await closePanelIfVisible();
+            markStepDone(PROGRESS_STEP_STORE_SETTINGS_DONE);
+        }
+
+        async function runStoreListingStep() {
+            console.log('Executing item 12/13: Store listing...');
+            await gotoAppSubPage('/store-listings', 'Store listings');
+
+            const createDefault = page.locator(
+                'button[debug-id="get-started-create-default-listing-button"], button:has-text("Create default store listing")'
+            ).first();
+            if (await createDefault.isVisible().catch(() => false)) {
+                await clickLocatorRobust(createDefault, 'Create default store listing button', 10000);
+                await delay(page, 3000);
+            } else {
+                await gotoAppSubPage('/main-store-listing', 'Default store listing');
+            }
+
+            const shortDescription = shortenShortDescription(
+                await readAppGenieDetailCardText(/应用简介|Short\s*description|App\s*summary/i, 'AppGenie short description')
+            );
+            const fullDescription = ensureTrailingSpace(
+                await readAppGenieDetailCardText(/应用描述|Full\s*description|App\s*description/i, 'AppGenie full description')
+            );
+
+            await page.bringToFront().catch(() => { });
+            await delay(page, 3000);
+            await fillFirstVisibleInputOn(page, [
+                'input[aria-label="Short description of the app"]',
+                'input[aria-label*="Short description" i]',
+                'input[maxlength="80"]',
+                'material-input input.mdc-text-field__input'
+            ], shortDescription, 'Short description', 3000);
+
+            await fillFirstVisibleInputOn(page, [
+                'textarea[aria-label="Full description of the app"]',
+                'textarea[aria-label*="Full description" i]',
+                'textarea[maxlength="4000"]',
+                'textarea.mdc-text-field__input'
+            ], fullDescription, 'Full description', 3000);
+
+            const imageFiles = await downloadAndExtractStoreImages();
+            await page.bringToFront().catch(() => { });
+            await delay(page, 3000);
+            await page.locator('text=/Graphics/i').first().scrollIntoViewIfNeeded({ timeout: 10000 }).catch(async () => {
+                await page.mouse.wheel(0, 1200).catch(() => { });
+            });
+            await delay(page, 3000);
+
+            const phoneAddAssets = page.locator(
+                'xpath=(//*[contains(normalize-space(.), "Phone screenshots")]/following::button[contains(normalize-space(.), "Add assets")])[1]'
+            ).first();
+            const addAssetsFallback = page.locator(
+                'button:has-text("Add assets"), [role="button"]:has-text("Add assets"), material-button:has-text("Add assets")'
+            ).nth(1);
+            await clickFirstVisibleOn(page, [phoneAddAssets, addAssetsFallback], 'Phone screenshots Add assets', 3000);
+
+            const uploadBtn = page.locator(
+                'button:has-text("Upload"), [role="button"]:has-text("Upload"), material-button:has-text("Upload")'
+            ).last();
+            await uploadFilesByUploadButton(page, uploadBtn, imageFiles, 'Phone screenshots');
+            await randomDelay(page, 10000, 15000);
+
+            const saveDraft = page.locator(
+                'button:has-text("Save as draft"), [debug-id="main-button"]:has-text("Save as draft"), button:has-text("Save")'
+            ).last();
+            if (await saveDraft.isVisible().catch(() => false) && !(await isLocatorDisabled(saveDraft))) {
+                await clickLocatorRobust(saveDraft, 'Store listing Save button', 10000);
+                await waitSaved(page);
+            } else {
+                console.log('[STORE LISTING] Save button not enabled after upload, continuing with existing autosave state.');
+            }
+            markStepDone(PROGRESS_STEP_STORE_LISTING_DONE);
+        }
+
+        async function waitForAabUploadReady(timeoutMs = 300000) {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+                const ready = await page.locator(
+                    'text=/App bundle|Version code|Target SDK|View details for App bundle|Details/i'
+                ).first().isVisible().catch(() => false);
+                if (ready) {
+                    console.log('[RELEASE] AAB upload detected.');
+                    return;
+                }
+                await delay(page, 5000);
+            }
+            const error = new Error('AAB upload did not finish within 5 minutes. Pausing script.');
+            error.stopRun = true;
+            throw error;
+        }
+
+        async function openProductionReleaseEditor() {
+            const uploadButton = page.locator(
+                'button:has-text("Upload"), [role="button"]:has-text("Upload"), material-button:has-text("Upload")'
+            ).first();
+
+            await retryAction(async () => {
+                if (await uploadButton.isVisible().catch(() => false)) {
+                    return;
+                }
+
+                const actionButtons = [
+                    page.locator('button[debug-id="create-release-button"], [role="button"][debug-id="create-release-button"]').first(),
+                    page.locator('button:has-text("Create new release"), [role="button"]:has-text("Create new release")').first(),
+                    page.locator('button:has-text("Create release"), [role="button"]:has-text("Create release")').first(),
+                    page.locator('button:has-text("Edit release"), [role="button"]:has-text("Edit release")').first(),
+                    page.locator('button:has-text("Continue editing"), [role="button"]:has-text("Continue editing")').first()
+                ];
+
+                let clicked = false;
+                for (const actionButton of actionButtons) {
+                    if (await actionButton.isVisible().catch(() => false)) {
+                        await clickLocatorRobust(actionButton, 'Production release create/edit button', 10000);
+                        clicked = true;
+                        break;
+                    }
+                }
+
+                if (!clicked) {
+                    throw new Error('Production release create/edit button not found.');
+                }
+
+                await delay(page, 3000);
+                await uploadButton.waitFor({ state: 'visible', timeout: 30000 });
+            }, 'Open production release editor', 5);
+            await delay(page, 3000);
+            return uploadButton;
+        }
+
+        async function runReleaseStep() {
+            console.log('Executing item 13/13: Production release...');
+            const aabPath = await downloadAabFromAppGenie();
+
+            await gotoAppSubPage('/tracks/production', 'Production');
+            const uploadButton = await openProductionReleaseEditor();
+            const releaseUrl = page.url();
+            await uploadFilesByUploadButton(page, uploadButton, [aabPath], 'AAB');
+            await waitForAabUploadReady(300000);
+
+            await setStoreCategoryFromAppGenieType();
+
+            await page.goto(releaseUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+            await delay(page, 3000);
+            await clickMainButton('Next');
+            await delay(page, 3000);
+            await clickMainButton('Save');
+            await delay(page, 3000);
+
+            const goOverview = page.locator(
+                'button[debug-id="yes-button"], button:has-text("Go to overview"), [role="button"]:has-text("Go to overview")'
+            ).first();
+            if (await goOverview.isVisible().catch(() => false)) {
+                await clickLocatorRobust(goOverview, 'Go to overview button', 10000);
+                await delay(page, 3000);
+            }
+
+            markStepDone(PROGRESS_STEP_RELEASE_DONE);
+        }
+
         async function runPrivacyPolicyStep() {
             await goToAppContentViaMonitorPolicyMenu();
-            console.log('Executing declaration 8/10: Privacy policy...');
+            console.log('Executing declaration 8/13: Privacy policy...');
             await clickStartDeclaration('Privacy policy');
 
             const privacyText = await openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions);
@@ -2000,7 +2677,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
         async function runContentRatingsStep() {
             await goToAppContent();
-            console.log('Executing declaration 9/10: Content ratings...');
+            console.log('Executing declaration 9/13: Content ratings...');
             await clickStartDeclaration('Content ratings');
 
             const startQuestionnaireBtn = page.locator(
@@ -2160,7 +2837,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
         async function runDataSafetyStep() {
             await goToAppContent();
-            console.log('Executing declaration 10/10: Data safety...');
+            console.log('Executing declaration 10/13: Data safety...');
             await clickStartDeclaration('Data safety');
 
             const isButtonEnabled = async (locator) => {
@@ -2276,7 +2953,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
                     ).first();
                     if (!(await isButtonEnabled(saveBtn2))) {
-                        throw new Error('Data safety second Save is not enabled.');
+                        console.log('[DATA SAFETY] Second Save is not enabled after first save; treating first saved state as complete.');
+                        markStepDone(PROGRESS_STEP_SAFETY_DONE);
+                        return;
                     }
                     await clickScopedButton(saveBtn2, 'Save (2/2)');
                     await waitSaved(page);
@@ -2536,6 +3215,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await runPrivacyPolicyStep();
             await runContentRatingsStep();
             await runDataSafetyStep();
+            await runStoreSettingsStep();
+            await runStoreListingStep();
+            await runReleaseStep();
 
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
             statusManager.updateTaskStatus(task, STATUS_DONE);
@@ -2618,6 +3300,11 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             });
 
             console.error(`Iteration ${i + 1} failed but continuing...`);
+            if (e && e.stopRun) {
+                console.error(`[STOP] ${e.message}`);
+                process.exitCode = 1;
+                break;
+            }
             if (isCdpConnectionError(e)) {
                 throw e;
             }
