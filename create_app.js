@@ -2407,6 +2407,38 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Fill Store listing contact email', 3);
         }
 
+        async function clickStoreListingContactSave() {
+            await retryAction(async () => {
+                const dialog = await ensureStoreListingContactDialogOpen();
+                const candidates = dialog.locator(
+                    'button[debug-id="main-button"], button:has-text("Save"), material-button:has-text("Save"), [role="button"]:has-text("Save")'
+                );
+                const count = await candidates.count().catch(() => 0);
+                let target = null;
+                for (let i = count - 1; i >= 0; i -= 1) {
+                    const candidate = candidates.nth(i);
+                    const text = (await candidate.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+                    if (!/^Save$/i.test(text)) continue;
+                    if (!(await candidate.isVisible().catch(() => false))) continue;
+                    const disabled = await candidate.evaluate((el) =>
+                        el.hasAttribute('disabled') ||
+                        el.classList.contains('mdc-button--disabled') ||
+                        el.getAttribute('aria-disabled') === 'true'
+                    ).catch(() => false);
+                    if (disabled) continue;
+                    target = candidate;
+                    break;
+                }
+
+                if (!target) {
+                    throw new Error('Store listing contact details Save button not found.');
+                }
+
+                await clickLocatorRobust(target, 'Store listing contact details Save button', 15000);
+                await delay(page, 3000);
+            }, 'Click Store listing contact details Save', 3);
+        }
+
         async function closePanelIfVisible() {
             const closeBtn = page.locator(
                 'button[aria-label="Close"], material-button[aria-label="Close"], .close-icon-button, button:has-text("Close")'
@@ -2466,7 +2498,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await ensureStoreListingContactDialogOpen();
             await fillStoreListingContactEmail(runtimeOptions.contactEmail);
             await randomDelay(page, 2000, 3000);
-            await clickMainButton('Save');
+            await clickStoreListingContactSave();
             await waitSaved(page);
             await closePanelIfVisible();
             markStepDone(PROGRESS_STEP_STORE_SETTINGS_DONE);
