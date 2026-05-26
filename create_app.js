@@ -2362,6 +2362,51 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickFirstVisibleOn(page, [sectionEdit, fallback], `${label} Edit`, 3000);
         }
 
+        function storeListingContactDialogLocator() {
+            return page.locator(
+                'div[role="dialog"], material-dialog, .mdc-dialog, .mat-mdc-dialog-container, .cdk-overlay-pane'
+            ).filter({ hasText: /Store\s*listing\s*contact\s*details/i }).first();
+        }
+
+        async function ensureStoreListingContactDialogOpen() {
+            const dialog = storeListingContactDialogLocator();
+            if (await dialog.isVisible().catch(() => false)) {
+                return dialog;
+            }
+
+            await clickStoreSectionEdit(/Store\s*listing\s*contact\s*details/i, 'Store listing contact details');
+            await dialog.waitFor({ state: 'visible', timeout: 30000 });
+            await delay(page, 3000);
+            return dialog;
+        }
+
+        async function fillStoreListingContactEmail(email) {
+            await retryAction(async () => {
+                const dialog = await ensureStoreListingContactDialogOpen();
+                const target = dialog.locator(
+                    'material-input[debug-id="email-input"] input, input[debug-id="email-input"], input.mdc-text-field__input, input[type="email"], input[type="text"]'
+                ).first();
+                await target.waitFor({ state: 'visible', timeout: 15000 });
+                await target.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+
+                await target.evaluate((el, nextValue) => {
+                    el.focus();
+                    el.value = '';
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.value = nextValue;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }, email);
+
+                const currentValue = await target.inputValue().catch(() => '');
+                if (currentValue !== email) {
+                    throw new Error(`Store listing contact email was not filled correctly. Current="${currentValue}"`);
+                }
+                await delay(page, 3000);
+            }, 'Fill Store listing contact email', 3);
+        }
+
         async function closePanelIfVisible() {
             const closeBtn = page.locator(
                 'button[aria-label="Close"], material-button[aria-label="Close"], .close-icon-button, button:has-text("Close")'
@@ -2418,15 +2463,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         async function runStoreSettingsStep() {
             console.log('Executing item 11/13: Store settings...');
             await gotoAppSubPage('/store-settings', 'Store settings');
-            await clickStoreSectionEdit(/Store\s*listing\s*contact\s*details/i, 'Store listing contact details');
-            await randomDelay(page, 2000, 3000);
-            await fillFirstVisibleInputOn(page, [
-                'input[type="email"]',
-                'input[aria-label*="Email" i]',
-                'input[aria-label*="email" i]',
-                'input.mdc-text-field__input[type="text"]',
-                'input.mdc-text-field__input'
-            ], runtimeOptions.contactEmail, 'Store listing contact email', 2500);
+            await ensureStoreListingContactDialogOpen();
+            await fillStoreListingContactEmail(runtimeOptions.contactEmail);
             await randomDelay(page, 2000, 3000);
             await clickMainButton('Save');
             await waitSaved(page);
@@ -2949,16 +2987,30 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     await waitSaved(page);
                     await delay(page, 3000);
 
-                    const saveBtn2 = page.locator(
-                        'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
-                    ).first();
-                    if (!(await isButtonEnabled(saveBtn2))) {
-                        console.log('[DATA SAFETY] Second Save is not enabled after first save; treating first saved state as complete.');
-                        markStepDone(PROGRESS_STEP_SAFETY_DONE);
-                        return;
-                    }
-                    await clickScopedButton(saveBtn2, 'Save (2/2)');
-                    await waitSaved(page);
+                    await retryAction(async () => {
+                        const saveBtn2 = page.locator(
+                            'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
+                        ).first();
+                        await saveBtn2.waitFor({ state: 'visible', timeout: 15000 });
+
+                        if (await isButtonEnabled(saveBtn2)) {
+                            await clickScopedButton(saveBtn2, 'Save (2/2)');
+                            await waitSaved(page);
+                            return;
+                        }
+
+                        throw new Error('Second Save button is still disabled.');
+                    }, 'Wait and click Data safety second Save', 4).catch(async (secondSaveError) => {
+                        console.log(`[DATA SAFETY] Second Save did not become enabled, trying one forced click: ${secondSaveError.message}`);
+                        const forcedSaveBtn = page.locator(
+                            'button[debug-id="save-button"], button:has-text("Save"), [debug-id="main-button"]:has-text("Save"), button[debug-id="button-save"]'
+                        ).first();
+                        await clickLocatorRobust(forcedSaveBtn, 'Data safety forced second Save button', 10000).catch((forceErr) => {
+                            console.log(`[DATA SAFETY] Forced second Save click skipped: ${forceErr.message}`);
+                        });
+                        await delay(page, 3000);
+                    });
+
                     markStepDone(PROGRESS_STEP_SAFETY_DONE);
                     return;
                 }
