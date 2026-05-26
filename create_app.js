@@ -1073,10 +1073,19 @@ function ensureTrailingSpace(value) {
     return text.endsWith(' ') ? text : `${text} `;
 }
 
+function ensureTrailingSpaceWithinLimit(value, maxLength) {
+    let text = normalizeAppGenieCardText(value).replace(/\s+/g, ' ');
+    const hardLimit = Math.max(1, Number(maxLength) || text.length + 1);
+    if (text.length >= hardLimit) {
+        text = text.slice(0, hardLimit - 1).replace(/\s+\S*$/, '').trim();
+    }
+    return ensureTrailingSpace(text).slice(0, hardLimit);
+}
+
 function shortenShortDescription(raw, maxLength = 80) {
     let text = normalizeAppGenieCardText(raw).replace(/\s+/g, ' ');
     if (text.length <= maxLength - 1) {
-        return ensureTrailingSpace(text);
+        return ensureTrailingSpaceWithinLimit(text, maxLength);
     }
 
     const replacements = [
@@ -1091,7 +1100,7 @@ function shortenShortDescription(raw, maxLength = 80) {
     for (const [pattern, replacement] of replacements) {
         text = text.replace(pattern, replacement).replace(/\s+/g, ' ');
         if (text.length <= maxLength - 1) {
-            return ensureTrailingSpace(text);
+            return ensureTrailingSpaceWithinLimit(text, maxLength);
         }
     }
 
@@ -1112,7 +1121,7 @@ function shortenShortDescription(raw, maxLength = 80) {
             .replace(/[,\-:;]+$/g, '')
             .trim();
     }
-    return ensureTrailingSpace(cut);
+    return ensureTrailingSpaceWithinLimit(cut, maxLength);
 }
 
 async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
@@ -2185,6 +2194,15 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         el.dispatchEvent(new Event('change', { bubbles: true }));
                     }, value);
                 });
+                await target.evaluate((el, nextValue) => {
+                    el.focus();
+                    if (el.value !== nextValue) {
+                        el.value = nextValue;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }, value).catch(() => { });
                 await delay(targetPage, waitMs);
             }, `Fill ${label}`, 3);
         }
@@ -2518,36 +2536,46 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await gotoAppSubPage('/main-store-listing', 'Default store listing');
             }
 
-            const shortDescription = shortenShortDescription(
-                await readAppGenieDetailCardText(/应用简介|Short\s*description|App\s*summary/i, 'AppGenie short description')
+            const shortDescription = ensureTrailingSpaceWithinLimit(
+                shortenShortDescription(
+                    await readAppGenieDetailCardText(/应用简介|Short\s*description|App\s*summary/i, 'AppGenie short description')
+                ),
+                80
             );
             const fullDescription = ensureTrailingSpace(
                 await readAppGenieDetailCardText(/应用描述|Full\s*description|App\s*description/i, 'AppGenie full description')
             );
 
             await page.bringToFront().catch(() => { });
-            await delay(page, 3000);
+            await delay(page, 5000);
+            console.log('[STORE LISTING] Filling short description...');
             await fillFirstVisibleInputOn(page, [
                 'input[aria-label="Short description of the app"]',
                 'input[aria-label*="Short description" i]',
                 'input[maxlength="80"]',
                 'material-input input.mdc-text-field__input'
-            ], shortDescription, 'Short description', 3000);
+            ], shortDescription, 'Short description', 5000);
+            console.log('[STORE LISTING] Short description filled.');
+            await delay(page, 5000);
 
+            console.log('[STORE LISTING] Filling full description...');
             await fillFirstVisibleInputOn(page, [
                 'textarea[aria-label="Full description of the app"]',
                 'textarea[aria-label*="Full description" i]',
                 'textarea[maxlength="4000"]',
                 'textarea.mdc-text-field__input'
-            ], fullDescription, 'Full description', 3000);
+            ], fullDescription, 'Full description', 5000);
+            console.log('[STORE LISTING] Full description filled.');
+            await delay(page, 5000);
 
             const imageFiles = await downloadAndExtractStoreImages();
             await page.bringToFront().catch(() => { });
-            await delay(page, 3000);
+            await delay(page, 5000);
+            console.log('[STORE LISTING] Moving to graphics section...');
             await page.locator('text=/Graphics/i').first().scrollIntoViewIfNeeded({ timeout: 10000 }).catch(async () => {
                 await page.mouse.wheel(0, 1200).catch(() => { });
             });
-            await delay(page, 3000);
+            await delay(page, 5000);
 
             const phoneAddAssets = page.locator(
                 'xpath=(//*[contains(normalize-space(.), "Phone screenshots")]/following::button[contains(normalize-space(.), "Add assets")])[1]'
@@ -2555,18 +2583,23 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const addAssetsFallback = page.locator(
                 'button:has-text("Add assets"), [role="button"]:has-text("Add assets"), material-button:has-text("Add assets")'
             ).nth(1);
+            console.log('[STORE LISTING] Opening phone screenshots asset panel...');
             await clickFirstVisibleOn(page, [phoneAddAssets, addAssetsFallback], 'Phone screenshots Add assets', 3000);
+            await delay(page, 5000);
 
             const uploadBtn = page.locator(
                 'button:has-text("Upload"), [role="button"]:has-text("Upload"), material-button:has-text("Upload")'
             ).last();
+            console.log('[STORE LISTING] Uploading phone screenshots...');
             await uploadFilesByUploadButton(page, uploadBtn, imageFiles, 'Phone screenshots');
+            console.log('[STORE LISTING] Phone screenshots uploaded, waiting for processing...');
             await randomDelay(page, 10000, 15000);
 
             const saveDraft = page.locator(
                 'button:has-text("Save as draft"), [debug-id="main-button"]:has-text("Save as draft"), button:has-text("Save")'
             ).last();
             if (await saveDraft.isVisible().catch(() => false) && !(await isLocatorDisabled(saveDraft))) {
+                console.log('[STORE LISTING] Saving store listing...');
                 await clickLocatorRobust(saveDraft, 'Store listing Save button', 10000);
                 await waitSaved(page);
             } else {
