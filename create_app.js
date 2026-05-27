@@ -2105,7 +2105,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Select checkbox containing "${textRegex}"`);
         }
 
-        async function clickMainButton(text) {
+        async function clickMainButtonOn(targetPage, text) {
             console.log(`Looking for and clicking button: ${text}...`);
             await retryAction(async () => {
                 const selectors = [
@@ -2116,7 +2116,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 ];
                 let foundBtn = null;
                 for (const sel of selectors) {
-                    const loc = page.locator(sel).first();
+                    const loc = targetPage.locator(sel).first();
                     if (await loc.isVisible().catch(() => false)) {
                         if (sel === '[debug-id="main-button"]') {
                             const content = await loc.innerText().catch(() => '');
@@ -2134,8 +2134,12 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 if (isDisabled) throw new Error(`Button "${text}" is disabled`);
 
                 await clickLocatorRobust(foundBtn, `"${text}" button`, 10000);
-                await delay(page, 3000);
+                await delay(targetPage, 3000);
             }, `Click "${text}" button`);
+        }
+
+        async function clickMainButton(text) {
+            await clickMainButtonOn(page, text);
         }
 
         async function fillFirstVisibleInput(selectors, value, label) {
@@ -2161,12 +2165,16 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(page, ms);
         }
 
-        async function gotoAppSubPage(subPath, label, waitMs = 3000) {
+        async function gotoAppSubPageOn(targetPage, subPath, label, waitMs = 3000) {
             console.log(`Navigating to "${label}"...`);
-            await page.bringToFront().catch(() => { });
-            await page.goto(appBasePath + subPath, { timeout: 120000, waitUntil: 'domcontentloaded' });
-            await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
-            await delay(page, waitMs);
+            await targetPage.bringToFront().catch(() => { });
+            await targetPage.goto(appBasePath + subPath, { timeout: 120000, waitUntil: 'domcontentloaded' });
+            await targetPage.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+            await delay(targetPage, waitMs);
+        }
+
+        async function gotoAppSubPage(subPath, label, waitMs = 3000) {
+            await gotoAppSubPageOn(page, subPath, label, waitMs);
         }
 
         async function fillFirstVisibleInputOn(targetPage, selectors, value, label, waitMs = 3000) {
@@ -2332,30 +2340,33 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
         async function downloadAabFromAppGenie() {
             const detailPage = await ensureAppGenieDetailPageReady();
-            let download = null;
-
-            const aabCard = detailPage.locator('div.ant-card').filter({
-                has: detailPage.locator('.ant-card-head-title').filter({ hasText: /AAB|App\s*Bundle|应用包|安装包|包体/i }).first()
-            }).first();
-            if (await aabCard.isVisible().catch(() => false)) {
-                const btn = aabCard.locator('button, a, [role="button"]').filter({ hasText: /下载|Download|AAB|aab/i }).first();
-                if (await btn.isVisible().catch(() => false)) {
-                    console.log('[APPGENIE] Downloading AAB from AAB card...');
-                    const downloadPromise = detailPage.waitForEvent('download', { timeout: 90000 });
-                    await clickLocatorRobust(btn, 'AAB download button', 10000);
-                    download = await downloadPromise;
-                }
+            const candidates = detailPage.locator('button, a, [role="button"]').filter({
+                hasText: /AAB\s*下载|下载\s*AAB|AAB\s*Download|Download\s*AAB/i
+            });
+            const count = await candidates.count().catch(() => 0);
+            let target = null;
+            for (let i = 0; i < count; i += 1) {
+                const loc = candidates.nth(i);
+                if (!(await loc.isVisible().catch(() => false))) continue;
+                const text = await loc.innerText().catch(() => '');
+                if (!/AAB/i.test(text) || !/(下载|Download)/i.test(text)) continue;
+                if (/APK|全部下载|Download\s*all|图片|image|zip/i.test(text)) continue;
+                target = loc;
+                break;
             }
 
-            if (!download) {
-                download = await downloadFromAppGenieDetail(
-                    /AAB|aab|App\s*Bundle|应用包|安装包|包体|下载|Download/i,
-                    'AAB',
-                    /全部下载|Download\s*all|图片|image|zip/i
-                );
+            if (!target) {
+                throw new Error('AAB download button not found on AppGenie details page.');
             }
 
+            console.log('[APPGENIE] Downloading AAB package from AppGenie details...');
+            const downloadPromise = detailPage.waitForEvent('download', { timeout: 90000 });
+            await clickLocatorRobust(target, 'AAB download button', 10000);
+            const download = await downloadPromise;
             const saved = await saveDownloadToTemp(download, 'aab', `${safeFileToken(task.appName)}.aab`);
+            if (path.extname(saved.filePath).toLowerCase() !== '.aab') {
+                throw new Error(`Downloaded package is not an AAB file: ${saved.filePath}`);
+            }
             console.log(`[APPGENIE] AAB saved: ${saved.filePath}`);
             return saved.filePath;
         }
@@ -2480,15 +2491,15 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
         }
 
-        async function clickStoreSectionEdit(sectionTitleRegex, label, fallbackMode = 'first') {
-            const sectionEdit = page.locator('console-section, console-block-1-column, console-form-row, section').filter({
+        async function clickStoreSectionEdit(sectionTitleRegex, label, fallbackMode = 'first', targetPage = page) {
+            const sectionEdit = targetPage.locator('console-section, console-block-1-column, console-form-row, section').filter({
                 hasText: sectionTitleRegex
             }).locator('material-button[debug-id="edit-store-listing-section-button"], button:has-text("Edit")').first();
-            const allEditButtons = page.locator(
+            const allEditButtons = targetPage.locator(
                 'material-button[debug-id="edit-store-listing-section-button"], button:has-text("Edit"), [role="button"]:has-text("Edit")'
             );
             const fallback = fallbackMode === 'last' ? allEditButtons.last() : allEditButtons.first();
-            await clickFirstVisibleOn(page, [sectionEdit, fallback], `${label} Edit`, 3000);
+            await clickFirstVisibleOn(targetPage, [sectionEdit, fallback], `${label} Edit`, 3000);
         }
 
         function storeListingContactDialogLocator() {
@@ -2593,25 +2604,25 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log('[STORE SETTINGS] Store listing contact details dialog closed.');
         }
 
-        async function closePanelIfVisible() {
-            const closeBtn = page.locator(
+        async function closePanelIfVisible(targetPage = page) {
+            const closeBtn = targetPage.locator(
                 'button[aria-label="Close"], material-button[aria-label="Close"], .close-icon-button, button:has-text("Close")'
             ).first();
             if (await closeBtn.isVisible().catch(() => false)) {
                 await clickLocatorRobust(closeBtn, 'Close panel button', 10000);
-                await randomDelay(page, 2000, 3000);
+                await randomDelay(targetPage, 2000, 3000);
             }
         }
 
-        async function selectDropdownByDebugId(debugId, optionRegex, label) {
-            const dropdown = page.locator(
+        async function selectDropdownByDebugId(debugId, optionRegex, label, targetPage = page) {
+            const dropdown = targetPage.locator(
                 `material-dropdown-select[debug-id="${debugId}"] dropdown-button, ` +
                 `material-dropdown-select[debug-id="${debugId}"] [role="button"]`
             ).first();
             await clickLocatorRobust(dropdown, `${label} dropdown`, 10000);
-            await delay(page, 1200);
+            await delay(targetPage, 1200);
 
-            const options = page.locator(
+            const options = targetPage.locator(
                 'material-select-dropdown-item, material-option, material-list-item, [role="option"], .mdc-list-item'
             ).filter({ hasText: optionRegex });
             const optionCount = await options.count().catch(() => 0);
@@ -2627,23 +2638,54 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 throw new Error(`${label} option not found: ${optionRegex}`);
             }
             await clickLocatorRobust(option, `${label} option`, 10000);
-            await delay(page, 3000);
+            await delay(targetPage, 3000);
         }
 
-        async function setStoreCategoryFromAppGenieType() {
+        async function setStoreCategoryFromAppGenieType(preOpenedPage = null) {
             const typeKey = task.appGenieTypeKey || normalizeAppGenieTypeKey(task.appGenieTypeLabel);
             const isGame = typeKey === 'game';
             const appOrGame = isGame ? 'Game' : 'App';
             const category = isGame ? 'Casual' : 'Tools';
-            console.log(`[STORE SETTINGS] Setting App category from AppGenie type: ${task.appGenieTypeLabel || 'unknown'} -> ${appOrGame}/${category}`);
+            console.log(`[STORE SETTINGS] Setting App category in temporary tab: ${task.appGenieTypeLabel || 'unknown'} -> ${appOrGame}/${category}`);
 
-            await gotoAppSubPage('/store-settings', 'Store settings for app category');
-            await clickStoreSectionEdit(/App\s*category|App or game|Category/i, 'App category', 'last');
-            await selectDropdownByDebugId('type-dropdown', new RegExp(`^\\s*${escapeRegExp(appOrGame)}\\s*$`, 'i'), 'App or game');
-            await selectDropdownByDebugId('category-dropdown', new RegExp(`^\\s*${escapeRegExp(category)}\\s*$`, 'i'), 'Category');
-            await clickMainButton('Save');
-            await waitSaved(page);
-            await closePanelIfVisible();
+            const categoryPage = preOpenedPage || await context.newPage();
+            try {
+                if (preOpenedPage) {
+                    console.log('[STORE SETTINGS] Using pre-opened Production release tab, then navigating it to Store settings...');
+                }
+                await gotoAppSubPageOn(categoryPage, '/store-settings', 'Store settings for app category', 5000);
+                await clickStoreSectionEdit(/App\s*category|App or game|Category/i, 'App category', 'last', categoryPage);
+                await randomDelay(categoryPage, 3000, 5000);
+
+                await selectDropdownByDebugId(
+                    'type-dropdown',
+                    new RegExp(`^\\s*${escapeRegExp(appOrGame)}\\s*$`, 'i'),
+                    'App or game',
+                    categoryPage
+                );
+                await randomDelay(categoryPage, 3000, 5000);
+
+                await selectDropdownByDebugId(
+                    'category-dropdown',
+                    new RegExp(`^\\s*${escapeRegExp(category)}\\s*$`, 'i'),
+                    'Category',
+                    categoryPage
+                );
+                await randomDelay(categoryPage, 3000, 5000);
+
+                await clickMainButtonOn(categoryPage, 'Save');
+                await waitSaved(categoryPage);
+                await closePanelIfVisible(categoryPage);
+                await randomDelay(categoryPage, 3000, 5000);
+                console.log('[STORE SETTINGS] App category updated in temporary tab.');
+            } finally {
+                console.log('[STORE SETTINGS] Closing temporary Store settings tab...');
+                if (!categoryPage.isClosed()) {
+                    await categoryPage.close().catch(() => { });
+                }
+                await page.bringToFront().catch(() => { });
+                await randomDelay(page, 3000, 5000);
+            }
         }
 
         async function runStoreSettingsStep() {
@@ -2789,6 +2831,24 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return uploadButton;
         }
 
+        async function openSameProductionReleaseTab(releaseUrl) {
+            console.log('[RELEASE] Opening same Production release page in a temporary tab before AAB upload...');
+            const releaseMirrorPage = await context.newPage();
+            try {
+                await releaseMirrorPage.goto(releaseUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+                await releaseMirrorPage.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+                await randomDelay(releaseMirrorPage, 5000, 7000);
+                console.log('[RELEASE] Temporary Production release tab is ready.');
+                console.log('[RELEASE] Switching focus back to original Production release page for AAB upload...');
+                await page.bringToFront().catch(() => { });
+                await randomDelay(page, 3000, 5000);
+                return releaseMirrorPage;
+            } catch (error) {
+                await releaseMirrorPage.close().catch(() => { });
+                throw error;
+            }
+        }
+
         async function runReleaseStep() {
             console.log('Executing item 13/13: Production release...');
             console.log('[RELEASE] Downloading AAB package...');
@@ -2802,18 +2862,34 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const releaseUrl = page.url();
             await randomDelay(page, 5000, 7000);
 
-            console.log('[RELEASE] Uploading AAB package...');
-            await uploadFilesByUploadButton(page, uploadButton, [aabPath], 'AAB');
-            await randomDelay(page, 5000, 7000);
-            await waitForAabUploadReady(300000);
-            await randomDelay(page, 5000, 7000);
+            let releaseMirrorPage = null;
+            try {
+                releaseMirrorPage = await openSameProductionReleaseTab(releaseUrl);
 
-            console.log('[RELEASE] Updating Store settings category...');
-            await setStoreCategoryFromAppGenieType();
-            await randomDelay(page, 5000, 7000);
+                console.log('[RELEASE] Uploading AAB package on original Production release page...');
+                await uploadFilesByUploadButton(page, uploadButton, [aabPath], 'AAB');
+                await randomDelay(page, 5000, 7000);
+                await waitForAabUploadReady(300000);
+                await randomDelay(page, 5000, 7000);
+
+                console.log('[RELEASE] Switching to temporary tab for Store settings category...');
+                await setStoreCategoryFromAppGenieType(releaseMirrorPage);
+                releaseMirrorPage = null;
+                await randomDelay(page, 5000, 7000);
+            } catch (error) {
+                if (releaseMirrorPage && !releaseMirrorPage.isClosed()) {
+                    console.log('[RELEASE] Closing temporary Production release tab after error...');
+                    await releaseMirrorPage.close().catch(() => { });
+                    await page.bringToFront().catch(() => { });
+                }
+                throw error;
+            }
 
             console.log('[RELEASE] Returning to Production release editor...');
-            await page.goto(releaseUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+            await page.bringToFront().catch(() => { });
+            if (page.url() !== releaseUrl) {
+                await page.goto(releaseUrl, { timeout: 120000, waitUntil: 'domcontentloaded' });
+            }
             await randomDelay(page, 5000, 7000);
             console.log('[RELEASE] Clicking Next...');
             await clickMainButton('Next');
