@@ -2858,6 +2858,64 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        async function sendChangesForReview() {
+            console.log('[RELEASE] Opening Publishing overview...');
+            await page.bringToFront().catch(() => { });
+            if (!/\/publishing(?:[/?#]|$)/.test(String(page.url() || ''))) {
+                await page.goto(`${appBasePath}/publishing`, { timeout: 120000, waitUntil: 'domcontentloaded' });
+            }
+            await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+            await randomDelay(page, 5000, 7000);
+
+            const sendForReviewButton = page.locator(
+                'button[debug-id="send-for-review-button"], [role="button"][debug-id="send-for-review-button"]'
+            ).filter({
+                hasText: /Send\s+\d+\s+changes?\s+for\s+review/i
+            }).first();
+
+            console.log('[RELEASE] Sending changes for review...');
+            await retryAction(async () => {
+                await sendForReviewButton.waitFor({ state: 'visible', timeout: 90000 });
+                if (await isLocatorDisabled(sendForReviewButton)) {
+                    throw new Error('Send changes for review button is disabled.');
+                }
+                await clickLocatorRobust(sendForReviewButton, 'Send changes for review button', 15000);
+            }, 'Click Send changes for review', 5);
+            await randomDelay(page, 3000, 5000);
+
+            const sendDialog = page.locator('div[role="dialog"], div[aria-modal="true"]').filter({
+                hasText: /Send\s+\d+\s+changes?\s+for\s+review|These changes will be sent/i
+            }).first();
+            const confirmButton = sendDialog.locator(
+                'button[debug-id="yes-button"], [role="button"][debug-id="yes-button"]'
+            ).filter({
+                hasText: /^Send changes for review$/i
+            }).first();
+
+            console.log('[RELEASE] Confirming send changes for review dialog...');
+            await retryAction(async () => {
+                await sendDialog.waitFor({ state: 'visible', timeout: 60000 });
+                await confirmButton.waitFor({ state: 'visible', timeout: 60000 });
+                if (await isLocatorDisabled(confirmButton)) {
+                    throw new Error('Confirm send changes for review button is disabled.');
+                }
+                await clickLocatorRobust(confirmButton, 'Confirm send changes for review button', 15000);
+            }, 'Confirm Send changes for review', 3);
+
+            console.log('[RELEASE] Waiting for changes to enter review...');
+            await page.waitForLoadState('networkidle', { timeout: 120000 }).catch(() => { });
+            const changesInReview = page.locator('text=/Changes\\s+in\\s+review/i').first();
+            const reviewConfirmation = page.locator('text=/Your changes are now in review/i').first();
+            await retryAction(async () => {
+                const hasChangesInReview = await changesInReview.isVisible().catch(() => false);
+                const hasReviewConfirmation = await reviewConfirmation.isVisible().catch(() => false);
+                if (!hasChangesInReview && !hasReviewConfirmation) {
+                    throw new Error('Changes in review confirmation not visible yet.');
+                }
+            }, 'Wait for Changes in review confirmation', 12);
+            await randomDelay(page, 5000, 7000);
+        }
+
         async function runReleaseStep() {
             console.log('Executing item 13/13: Production release...');
             console.log('[RELEASE] Downloading AAB package...');
@@ -2917,6 +2975,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await randomDelay(page, 5000, 7000);
             }
 
+            await sendChangesForReview();
             markStepDone(PROGRESS_STEP_RELEASE_DONE);
         }
 
