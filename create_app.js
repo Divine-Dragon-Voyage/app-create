@@ -2776,19 +2776,28 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_STORE_LISTING_DONE);
         }
 
-        async function waitForAabUploadReady(timeoutMs = 300000) {
+        async function waitForAabUploadReady(aabPath, timeoutMs = 300000) {
+            const aabFileName = path.basename(aabPath);
+            console.log(`[RELEASE] Waiting for uploaded AAB file item: ${aabFileName}`);
             const deadline = Date.now() + timeoutMs;
             while (Date.now() < deadline) {
-                const ready = await page.locator(
-                    'text=/App bundle|Version code|Target SDK|View details for App bundle|Details/i'
-                ).first().isVisible().catch(() => false);
+                const ready = await page.evaluate((fileName) => {
+                    const items = Array.from(document.querySelectorAll('.file-list-item'));
+                    return items.some((item) => {
+                        const name = item.querySelector('.multiple-file-name')?.textContent?.trim();
+                        const hasRemoveButton = Array.from(item.querySelectorAll('button[aria-label]')).some((button) => {
+                            return (button.getAttribute('aria-label') || '').includes(fileName);
+                        });
+                        return name === fileName && hasRemoveButton;
+                    });
+                }, aabFileName).catch(() => false);
                 if (ready) {
-                    console.log('[RELEASE] AAB upload detected.');
+                    console.log(`[RELEASE] Uploaded AAB file item detected: ${aabFileName}`);
                     return;
                 }
                 await delay(page, 5000);
             }
-            const error = new Error('AAB upload did not finish within 5 minutes. Pausing script.');
+            const error = new Error(`AAB upload file item did not appear within 5 minutes: ${aabFileName}. Pausing script.`);
             error.stopRun = true;
             throw error;
         }
@@ -2860,6 +2869,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
             const uploadButton = await openProductionReleaseEditor();
             const releaseUrl = page.url();
+            console.log('[RELEASE] Create release page ready; opening same URL tab before AAB upload...');
             await randomDelay(page, 5000, 7000);
 
             let releaseMirrorPage = null;
@@ -2869,7 +2879,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 console.log('[RELEASE] Uploading AAB package on original Production release page...');
                 await uploadFilesByUploadButton(page, uploadButton, [aabPath], 'AAB');
                 await randomDelay(page, 5000, 7000);
-                await waitForAabUploadReady(300000);
+                await waitForAabUploadReady(aabPath, 300000);
                 await randomDelay(page, 5000, 7000);
 
                 console.log('[RELEASE] Switching to temporary tab for Store settings category...');
