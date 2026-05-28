@@ -3196,6 +3196,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const releaseNeedFixReason = await detectReleaseNeedFixReason();
             if (releaseNeedFixReason) {
                 console.log(`[RELEASE] Need manual fix detected: ${releaseNeedFixReason}`);
+                await closeOtherTabsAfterTaskDone();
                 throw createReleaseNeedFixError(releaseNeedFixReason);
             }
             console.log('[RELEASE] Saving Production release...');
@@ -3205,6 +3206,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 const lateNeedFixReason = await detectReleaseNeedFixReason();
                 if (lateNeedFixReason) {
                     console.log(`[RELEASE] Need manual fix detected after Save failed: ${lateNeedFixReason}`);
+                    await closeOtherTabsAfterTaskDone();
                     throw createReleaseNeedFixError(lateNeedFixReason);
                 }
                 throw saveError;
