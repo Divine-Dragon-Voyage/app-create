@@ -3987,7 +3987,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
     const failedCount = runStats.failed.length;
     const needFixCount = runStats.needFix.length;
     const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
-    const needFixNames = runStats.needFix.map(item => `${item.appName} (${item.packageName}) - ${item.reason}`);
+    const needFixNames = runStats.needFix.map(item => `${item.appName} (${item.packageName})`);
     const successNames = runStats.successItems.map(item => `${item.appName} (${item.packageName})`);
     const summaryLines = [
         `Total loaded: ${runStats.totalLoaded}`,
