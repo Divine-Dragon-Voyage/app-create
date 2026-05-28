@@ -40,6 +40,7 @@ const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\
 const STATUS_PARTIAL = 'PARTIAL';
 const STATUS_DONE = 'DONE';
 const STATUS_FAILED = 'FAILED';
+const STATUS_NEED_FIX = 'NEED_FIX';
 const PROGRESS_STEP_APP_CREATED = 'APP_CREATED';
 const PROGRESS_STEP_ADS_DONE = 'ADS_DONE';
 const PROGRESS_STEP_APP_ACCESS_DONE = 'APP_ACCESS_DONE';
@@ -301,6 +302,7 @@ function normalizeStatusValue(value) {
     if (text === STATUS_DONE) return STATUS_DONE;
     if (text === STATUS_PARTIAL) return STATUS_PARTIAL;
     if (text === STATUS_FAILED) return STATUS_FAILED;
+    if (text === STATUS_NEED_FIX) return STATUS_NEED_FIX;
     return '';
 }
 
@@ -3055,6 +3057,38 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        async function detectReleaseNeedFixReason() {
+            const problemStatus = page.locator('status-text').filter({
+                hasText: /We found some problems with your release/i
+            }).first();
+            const problemText = page.locator('text=/We found some problems with your release/i').first();
+            const errorsHeader = page.locator(
+                'simple-html[debug-id="header-text"], [debug-id="header-text"], [role="heading"]'
+            ).filter({
+                hasText: /Errors,\s*warnings\s*and\s*messages/i
+            }).first();
+
+            const hasProblemStatus = await problemStatus.isVisible().catch(() => false);
+            const hasProblemText = await problemText.isVisible().catch(() => false);
+            const hasErrorsHeader = await errorsHeader.isVisible().catch(() => false);
+            if (!hasProblemStatus && !hasProblemText && !hasErrorsHeader) {
+                return '';
+            }
+
+            const errorDetails = await page.locator('text=/Your advertising ID declaration/i')
+                .first()
+                .innerText()
+                .catch(() => '');
+            return errorDetails || 'We found some problems with your release / Errors, warnings and messages';
+        }
+
+        function createReleaseNeedFixError(reason) {
+            const error = new Error(reason || 'Release needs manual fixes before it can be saved.');
+            error.code = 'RELEASE_NEED_FIX';
+            error.needFix = true;
+            return error;
+        }
+
         async function sendChangesForReview() {
             console.log('[RELEASE] Opening Publishing overview...');
             await page.bringToFront().catch(() => { });
@@ -3159,8 +3193,22 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log('[RELEASE] Clicking Next...');
             await clickMainButton('Next');
             await randomDelay(page, 5000, 7000);
+            const releaseNeedFixReason = await detectReleaseNeedFixReason();
+            if (releaseNeedFixReason) {
+                console.log(`[RELEASE] Need manual fix detected: ${releaseNeedFixReason}`);
+                throw createReleaseNeedFixError(releaseNeedFixReason);
+            }
             console.log('[RELEASE] Saving Production release...');
-            await clickMainButton('Save');
+            try {
+                await clickMainButton('Save');
+            } catch (saveError) {
+                const lateNeedFixReason = await detectReleaseNeedFixReason();
+                if (lateNeedFixReason) {
+                    console.log(`[RELEASE] Need manual fix detected after Save failed: ${lateNeedFixReason}`);
+                    throw createReleaseNeedFixError(lateNeedFixReason);
+                }
+                throw saveError;
+            }
             await randomDelay(page, 5000, 7000);
 
             const goOverview = page.locator(
@@ -3868,6 +3916,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         planned: selectedTasks.length,
         success: 0,
         successItems: [],
+        needFix: [],
         failed: []
     };
 
@@ -3889,27 +3938,40 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const errorCode = String((e && e.code) || '');
             const isCreateFailedToast = errorCode === 'CREATE_FAILED_TOAST';
             const isCreateFailedTimeout = errorCode === 'CREATE_FAILED_TIMEOUT';
-            task.status = STATUS_FAILED;
-            statusManager.updateTaskStatus(task, STATUS_FAILED);
+            const isReleaseNeedFix = errorCode === 'RELEASE_NEED_FIX' || Boolean(e && e.needFix);
+            if (isReleaseNeedFix) {
+                task.status = STATUS_NEED_FIX;
+                statusManager.updateTaskStatus(task, STATUS_NEED_FIX);
+                runStats.needFix.push({
+                    appName: task.appName,
+                    packageName: task.packageName,
+                    reason: String((e && e.message) || 'Release needs manual fixes.')
+                });
+                console.warn(`[NEED_FIX] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ${e.message}`);
+                console.warn(`Iteration ${i + 1} needs manual fix; continuing to next row...`);
+            } else {
+                task.status = STATUS_FAILED;
+                statusManager.updateTaskStatus(task, STATUS_FAILED);
 
-            runStats.failed.push({
-                appName: task.appName,
-                packageName: task.packageName,
-                reason: isCreateFailedToast
-                    ? "Your app couldn't be created"
-                    : isCreateFailedTimeout
-                        ? 'Create app timed out (skipped this row).'
-                        : String((e && e.message) || 'Unknown error')
-            });
+                runStats.failed.push({
+                    appName: task.appName,
+                    packageName: task.packageName,
+                    reason: isCreateFailedToast
+                        ? "Your app couldn't be created"
+                        : isCreateFailedTimeout
+                            ? 'Create app timed out (skipped this row).'
+                            : String((e && e.message) || 'Unknown error')
+                });
 
-            console.error(`Iteration ${i + 1} failed but continuing...`);
-            if (e && e.stopRun) {
-                console.error(`[STOP] ${e.message}`);
-                process.exitCode = 1;
-                break;
-            }
-            if (isCdpConnectionError(e)) {
-                throw e;
+                console.error(`Iteration ${i + 1} failed but continuing...`);
+                if (e && e.stopRun) {
+                    console.error(`[STOP] ${e.message}`);
+                    process.exitCode = 1;
+                    break;
+                }
+                if (isCdpConnectionError(e)) {
+                    throw e;
+                }
             }
         }
 
@@ -3921,18 +3983,27 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
     }
 
     const failedCount = runStats.failed.length;
+    const needFixCount = runStats.needFix.length;
     const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
+    const needFixNames = runStats.needFix.map(item => `${item.appName} (${item.packageName}) - ${item.reason}`);
     const successNames = runStats.successItems.map(item => `${item.appName} (${item.packageName})`);
     const summaryLines = [
         `Total loaded: ${runStats.totalLoaded}`,
         `Planned: ${runStats.planned}`,
         `Success: ${runStats.success}`,
+        `Need fix: ${needFixCount}`,
         `Failed: ${failedCount}`
     ];
     if (successNames.length > 0) {
         summaryLines.push('Successful apps:');
         for (const name of successNames) {
             summaryLines.push(`[OK] ${name}`);
+        }
+    }
+    if (needFixCount > 0) {
+        summaryLines.push('Need fix apps:');
+        for (const name of needFixNames) {
+            summaryLines.push(`[NEED_FIX] ${name}`);
         }
     }
     if (failedCount > 0) {
@@ -3942,19 +4013,26 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         }
     }
     const summaryText = summaryLines.join('\n');
+    const coloredSummaryText = summaryLines
+        .map(line => line.startsWith('Need fix') || line.startsWith('[NEED_FIX]')
+            ? `\x1b[33m${line}\x1b[0m`
+            : line)
+        .join('\n');
     const summaryPayload = {
         generatedAt: new Date().toISOString(),
         totalLoaded: runStats.totalLoaded,
         planned: runStats.planned,
         success: runStats.success,
         successItems: runStats.successItems,
+        needFixCount,
+        needFix: runStats.needFix,
         failedCount,
         failed: runStats.failed,
         summaryText
     };
 
     console.log('================ Run Summary ================');
-    console.log(summaryText);
+    console.log(coloredSummaryText);
     console.log('=============================================');
     writeRunSummaryFile(summaryPayload);
 })().catch(err => {
