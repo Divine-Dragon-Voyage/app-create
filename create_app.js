@@ -1046,6 +1046,142 @@ function collectFilesRecursive(rootDir) {
     return files;
 }
 
+function getDefaultDownloadDirectories() {
+    const candidates = [
+        process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'Downloads') : '',
+        path.join(os.homedir(), 'Downloads')
+    ];
+
+    const seen = new Set();
+    return candidates
+        .map(dir => path.resolve(dir))
+        .filter(dir => {
+            if (!dir || seen.has(dir)) return false;
+            seen.add(dir);
+            return fs.existsSync(dir);
+        });
+}
+
+function findRecentAabDownloads(downloadDirs, startedAtMs, expectedToken) {
+    const token = String(expectedToken || '').toLowerCase();
+    const earliestMtimeMs = Number(startedAtMs || 0) - 5000;
+    const candidates = [];
+
+    for (const dir of downloadDirs) {
+        let entries = [];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch (_) {
+            continue;
+        }
+
+        for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            const filePath = path.join(dir, entry.name);
+            const lowerName = entry.name.toLowerCase();
+            if (!lowerName.endsWith('.aab')) continue;
+
+            let stat;
+            try {
+                stat = fs.statSync(filePath);
+            } catch (_) {
+                continue;
+            }
+
+            if (stat.size <= 0 || stat.mtimeMs < earliestMtimeMs) continue;
+            candidates.push({
+                filePath,
+                size: stat.size,
+                mtimeMs: stat.mtimeMs,
+                score: token && lowerName.includes(token) ? 1 : 0
+            });
+        }
+    }
+
+    candidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.mtimeMs - a.mtimeMs;
+    });
+    return candidates;
+}
+
+function hasActiveChromePartialDownload(downloadDirs, startedAtMs, expectedToken) {
+    const token = String(expectedToken || '').toLowerCase();
+    const earliestMtimeMs = Number(startedAtMs || 0) - 5000;
+
+    for (const dir of downloadDirs) {
+        let entries = [];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch (_) {
+            continue;
+        }
+
+        for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            const lowerName = entry.name.toLowerCase();
+            if (!lowerName.endsWith('.crdownload')) continue;
+            if (token && !lowerName.includes(token) && !lowerName.includes('.aab')) continue;
+
+            try {
+                const stat = fs.statSync(path.join(dir, entry.name));
+                if (stat.mtimeMs >= earliestMtimeMs) {
+                    return true;
+                }
+            } catch (_) {
+                // Ignore files that disappear while Chrome finishes the download.
+            }
+        }
+    }
+
+    return false;
+}
+
+async function waitForRecentAabDownloadFromDisk({
+    startedAtMs,
+    expectedPackageName,
+    timeoutMs = 300000,
+    stableMs = 5000
+}) {
+    const downloadDirs = getDefaultDownloadDirectories();
+    if (!downloadDirs.length) {
+        const error = new Error('No existing browser download directory found for AAB fallback scan.');
+        error.stopRun = true;
+        throw error;
+    }
+
+    console.log(`[APPGENIE] Watching download folder(s) for AAB: ${downloadDirs.join(', ')}`);
+    const deadline = Date.now() + timeoutMs;
+    let lastPath = '';
+    let lastSize = -1;
+    let stableSinceMs = 0;
+
+    while (Date.now() < deadline) {
+        const activePartial = hasActiveChromePartialDownload(downloadDirs, startedAtMs, expectedPackageName);
+        const [candidate] = findRecentAabDownloads(downloadDirs, startedAtMs, expectedPackageName);
+
+        if (candidate) {
+            if (candidate.filePath !== lastPath || candidate.size !== lastSize) {
+                lastPath = candidate.filePath;
+                lastSize = candidate.size;
+                stableSinceMs = Date.now();
+                console.log(`[APPGENIE] AAB fallback candidate found: ${candidate.filePath}`);
+            } else if (!activePartial && Date.now() - stableSinceMs >= stableMs) {
+                console.log(`[APPGENIE] AAB fallback download completed: ${candidate.filePath}`);
+                return candidate.filePath;
+            }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2500));
+    }
+
+    const error = new Error(
+        `AAB download was not detected in browser download folder within ${Math.round(timeoutMs / 1000)}s.`
+    );
+    error.stopRun = true;
+    throw error;
+}
+
 function findImagesNamed(rootDir, names = ['1', '2', '3']) {
     const files = collectFilesRecursive(rootDir);
     const imageExts = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -2404,15 +2540,32 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
 
             console.log('[APPGENIE] Downloading AAB package from AppGenie details...');
-            const downloadPromise = detailPage.waitForEvent('download', { timeout: 90000 });
+            const downloadStartedAtMs = Date.now();
+            const downloadPromise = detailPage.waitForEvent('download', { timeout: 90000 })
+                .then(download => ({ download }))
+                .catch(error => ({ error }));
             await clickLocatorRobust(target, 'AAB download button', 10000);
-            const download = await downloadPromise;
-            const saved = await saveDownloadToTemp(download, 'aab', `${safeFileToken(task.appName)}.aab`);
-            if (path.extname(saved.filePath).toLowerCase() !== '.aab') {
-                throw new Error(`Downloaded package is not an AAB file: ${saved.filePath}`);
+            const downloadResult = await downloadPromise;
+
+            if (downloadResult.download) {
+                const saved = await saveDownloadToTemp(downloadResult.download, 'aab', `${safeFileToken(task.appName)}.aab`);
+                if (path.extname(saved.filePath).toLowerCase() !== '.aab') {
+                    throw new Error(`Downloaded package is not an AAB file: ${saved.filePath}`);
+                }
+                console.log(`[APPGENIE] AAB saved: ${saved.filePath}`);
+                return saved.filePath;
             }
-            console.log(`[APPGENIE] AAB saved: ${saved.filePath}`);
-            return saved.filePath;
+
+            console.log(
+                `[APPGENIE] AAB download event was not captured; scanning browser download folder. ` +
+                `Reason: ${downloadResult.error.message}`
+            );
+            const fallbackPath = await waitForRecentAabDownloadFromDisk({
+                startedAtMs: downloadStartedAtMs,
+                expectedPackageName: task.packageName,
+                timeoutMs: 300000
+            });
+            return fallbackPath;
         }
 
         async function uploadFilesByUploadButton(targetPage, uploadButton, files, label) {
