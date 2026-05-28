@@ -1305,20 +1305,25 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     // Slow down intentionally on VPS so list state is fully ready before actions.
     await randomDelay(appGeniePage, 5000, 8000);
 
-    const searchInput = appGeniePage.locator(
-        'input[placeholder*="搜索邮箱"], input[placeholder*="邮箱"], input[placeholder*="email" i], input.ant-input'
-    ).first();
-    await retryAction(async () => {
-        await searchInput.waitFor({ state: 'visible', timeout: 30000 });
-        await searchInput.click({ timeout: 10000 });
-        await searchInput.fill('');
-        await searchInput.type(runtimeOptions.contactEmail, { delay: 40 });
-        await appGeniePage.keyboard.press('Enter').catch(() => { });
-    }, 'Search AppGenie tasks by contact email', 3);
-    console.log(`[APPGENIE] Searching task account by email: ${runtimeOptions.contactEmail}`);
-    await randomDelay(appGeniePage, 8000, 12000);
+    let emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
+    if (await emailRow.isVisible().catch(() => false)) {
+        console.log(`[APPGENIE] Task account found on current page: ${runtimeOptions.contactEmail}`);
+    } else {
+        const searchInput = appGeniePage.locator(
+            'input[placeholder*="搜索邮箱"], input[placeholder*="邮箱"], input[placeholder*="email" i], input.ant-input'
+        ).first();
+        await retryAction(async () => {
+            await searchInput.waitFor({ state: 'visible', timeout: 30000 });
+            await searchInput.click({ timeout: 10000 });
+            await searchInput.fill('');
+            await searchInput.type(runtimeOptions.contactEmail, { delay: 40 });
+            await appGeniePage.keyboard.press('Enter').catch(() => { });
+        }, 'Search AppGenie tasks by contact email', 3);
+        console.log(`[APPGENIE] Searching task account by email: ${runtimeOptions.contactEmail}`);
+        await randomDelay(appGeniePage, 8000, 12000);
 
-    const emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
+        emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
+    }
     await emailRow.waitFor({ state: 'visible', timeout: 60000 });
 
     await retryAction(async () => {
