@@ -1305,10 +1305,20 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     // Slow down intentionally on VPS so list state is fully ready before actions.
     await randomDelay(appGeniePage, 5000, 8000);
 
-    let emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
-    if (!(await emailRow.isVisible().catch(() => false))) {
-        emailRow = appGeniePage.locator('tr.ant-table-row').first();
-    }
+    const searchInput = appGeniePage.locator(
+        'input[placeholder*="搜索邮箱"], input[placeholder*="邮箱"], input[placeholder*="email" i], input.ant-input'
+    ).first();
+    await retryAction(async () => {
+        await searchInput.waitFor({ state: 'visible', timeout: 30000 });
+        await searchInput.click({ timeout: 10000 });
+        await searchInput.fill('');
+        await searchInput.type(runtimeOptions.contactEmail, { delay: 40 });
+        await appGeniePage.keyboard.press('Enter').catch(() => { });
+    }, 'Search AppGenie tasks by contact email', 3);
+    console.log(`[APPGENIE] Searching task account by email: ${runtimeOptions.contactEmail}`);
+    await randomDelay(appGeniePage, 8000, 12000);
+
+    const emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
     await emailRow.waitFor({ state: 'visible', timeout: 60000 });
 
     await retryAction(async () => {
@@ -1626,6 +1636,35 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
             return baseMatch[1];
         };
+
+        async function closeOtherTabsAfterTaskDone() {
+            if (!page || page.isClosed()) {
+                return;
+            }
+
+            const currentUrl = page.url();
+            const otherPages = page.context()
+                .pages()
+                .filter(candidate => candidate !== page && !candidate.isClosed());
+
+            if (!otherPages.length) {
+                console.log('[CLEANUP] No auxiliary tabs to close.');
+                return;
+            }
+
+            console.log(`[CLEANUP] Closing ${otherPages.length} auxiliary tab(s); keeping current tab: ${currentUrl || 'about:blank'}`);
+            for (const candidate of otherPages) {
+                const candidateUrl = candidate.url();
+                try {
+                    await candidate.close({ runBeforeUnload: false });
+                    console.log(`[CLEANUP] Closed auxiliary tab: ${candidateUrl || 'about:blank'}`);
+                } catch (closeError) {
+                    console.log(`[CLEANUP] Could not close auxiliary tab (${candidateUrl || 'about:blank'}): ${closeError.message}`);
+                }
+            }
+
+            await page.bringToFront().catch(() => { });
+        }
 
         const manualLoginWaitMs = getManualLoginWaitMs();
         const openAppListPage = async () => {
@@ -3627,6 +3666,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
             statusManager.updateTaskStatus(task, STATUS_DONE);
             task.status = STATUS_DONE;
+            await closeOtherTabsAfterTaskDone();
 
         const durationSeconds = Math.round((Date.now() - startTime) / 1000);
         console.log(`Finished: ${appName} (${packageName}), Duration: ${formatDuration(durationSeconds)}`);
