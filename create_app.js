@@ -14,6 +14,10 @@ const {
     buildTempDownloadRoot,
     shouldCloseAuxiliaryPage
 } = require('./cleanup_helpers');
+const {
+    FINANCIAL_FEATURES_MORE_OPTIONS_SELECTORS,
+    FINANCIAL_FEATURES_SAVE_MENU_SELECTORS
+} = require('./financial_features_flow');
 
 // Default delay (ms). Increase if VPS is slow.
 const DELAY = 3000;
@@ -2369,6 +2373,53 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickMainButtonOn(page, text);
         }
 
+        async function clickFinancialFeaturesSaveFallback() {
+            console.log('[FINANCE] Main Save button not found; trying More options -> Save fallback...');
+            await retryAction(async () => {
+                let moreOptionsButton = null;
+                for (const selector of FINANCIAL_FEATURES_MORE_OPTIONS_SELECTORS) {
+                    const candidate = page.locator(selector).last();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        moreOptionsButton = candidate;
+                        break;
+                    }
+                }
+                if (!moreOptionsButton) {
+                    throw new Error('Financial features More options button not found.');
+                }
+
+                await clickLocatorRobust(moreOptionsButton, 'Financial features More options button', 10000);
+                await delay(page, 1000);
+
+                let saveMenuItem = null;
+                for (const selector of FINANCIAL_FEATURES_SAVE_MENU_SELECTORS) {
+                    const candidate = page.locator(selector).last();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        saveMenuItem = candidate;
+                        break;
+                    }
+                }
+                if (!saveMenuItem) {
+                    throw new Error('Financial features Save menu item not found.');
+                }
+
+                await clickLocatorRobust(saveMenuItem, 'Financial features Save menu item', 10000);
+                await delay(page, 3000);
+            }, 'Financial features More options Save fallback', 3);
+        }
+
+        async function clickFinancialFeaturesSave() {
+            try {
+                await clickMainButton('Save');
+            } catch (err) {
+                const message = String((err && err.message) || '');
+                if (!/Main button with text "Save" not found/i.test(message)) {
+                    throw err;
+                }
+                await clickFinancialFeaturesSaveFallback();
+            }
+        }
+
         async function fillFirstVisibleInput(selectors, value, label) {
             await retryAction(async () => {
                 let target = null;
@@ -4257,7 +4308,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         await clickStartDeclaration('Financial features');
         await selectCheckbox("My app doesn't provide any financial features");
         await clickMainButton('Next');
-        await clickMainButton('Save');
+        await clickFinancialFeaturesSave();
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_FINANCE_DONE);
 
