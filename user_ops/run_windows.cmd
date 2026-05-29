@@ -23,4 +23,6 @@ if errorlevel 1 (
 
 echo.
 echo Task finished.
+echo Press any key to close...
+pause >nul
 exit /b 0

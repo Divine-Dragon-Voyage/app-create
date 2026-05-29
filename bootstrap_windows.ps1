@@ -703,9 +703,7 @@ function Main {
     if ($RunApp) {
         try {
             Invoke-AppCreation -ProjectDir $projectDir -ExcelFilePath $ExcelFile -DeveloperConsoleUrl $DeveloperUrl
-            if ($HoldWindowOnSuccess) {
-                Hold-WindowOnSuccess
-            }
+            Hold-WindowOnSuccess
             return
         } catch {
             Hold-WindowOnError -HintMessage "App run failed."
