@@ -2245,12 +2245,20 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         }
 
         async function goToAppContentViaMonitorPolicyMenu() {
+            const policyAndProgramsPattern = /Policy and program(?:mes|s)/i;
             const monitorAndImproveLink = page.locator(
                 'a[href*="/monitor"], a.item-link:has(.item-label:has-text("Monitor and improve")), [role="button"]:has-text("Monitor and improve")'
             ).first();
             const policyAndProgramsLink = page.locator(
-                'a.item-link:has(.item-label:has-text("Policy and programs")), [role="button"]:has-text("Policy and programs")'
-            ).first();
+                'div[role="listitem"], a.item-link, [role="button"]'
+            ).filter({
+                hasText: policyAndProgramsPattern
+            }).first();
+            const policyAndProgramsDirectLink = page.locator(
+                'a.item-link, [role="button"]'
+            ).filter({
+                hasText: policyAndProgramsPattern
+            }).first();
             const appContentLink = page.locator(
                 'a[href*="/app-content/overview"], a[href*="/app-content"], a.item-link:has(.item-label:has-text("App content")), [role="button"]:has-text("App content")'
             ).first();
@@ -2268,10 +2276,26 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await retryAction(async () => {
                 const appContentVisibleBefore = await appContentLink.isVisible().catch(() => false);
                 if (!appContentVisibleBefore) {
-                    await policyAndProgramsLink.waitFor({ state: 'visible', timeout: 60000 });
-                    await policyAndProgramsLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
-                    await policyAndProgramsLink.click({ timeout: 10000 });
-                    await delay(page, 1500);
+                    const policyVisible = await policyAndProgramsLink.isVisible().catch(() => false) ||
+                        await policyAndProgramsDirectLink.isVisible().catch(() => false);
+                    if (policyVisible) {
+                        const policyLink = await policyAndProgramsDirectLink.isVisible().catch(() => false)
+                            ? policyAndProgramsDirectLink
+                            : policyAndProgramsLink;
+                        await policyLink.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                        await policyLink.click({ timeout: 10000 });
+                        await delay(page, 1500);
+                    } else {
+                        console.log('[RELEASE] Policy and programs link not visible, using direct App content URL fallback.');
+                        await page.goto(appBasePath + '/app-content/overview', { timeout: 90000, waitUntil: 'domcontentloaded' });
+                        await delay(page, 8000);
+                    }
+                }
+                const appContentVisibleAfter = await appContentLink.isVisible().catch(() => false);
+                if (!appContentVisibleAfter) {
+                    console.log('[RELEASE] App content link still not visible, using direct App content URL fallback.');
+                    await page.goto(appBasePath + '/app-content/overview', { timeout: 90000, waitUntil: 'domcontentloaded' });
+                    await delay(page, 8000);
                 }
                 await appContentLink.waitFor({ state: 'visible', timeout: 45000 });
             }, 'Open Policy and programs', 3);
