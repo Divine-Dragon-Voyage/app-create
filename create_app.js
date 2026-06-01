@@ -15,6 +15,9 @@ const {
     shouldCloseAuxiliaryPage
 } = require('./cleanup_helpers');
 const {
+    GOOGLE_SITES_DELETE_HEADER_SELECTORS
+} = require('./google_sites_flow');
+const {
     OVERFLOW_MORE_OPTIONS_SELECTORS,
     OVERFLOW_SAVE_MENU_SELECTORS
 } = require('./overflow_save_flow');
@@ -1693,9 +1696,7 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     await delay(sitesPage, 500);
 
     const headerArea = sitesPage.locator('div[jsname="Zz0G1b"], section[data-header="true"]').first();
-    const deleteHeaderBtn = sitesPage.locator(
-        'button[aria-label="Delete header"], button[aria-label*="Delete header"], button[aria-label*="删除"]'
-    ).first();
+    const deleteHeaderBtn = sitesPage.locator(GOOGLE_SITES_DELETE_HEADER_SELECTORS.join(', ')).first();
 
     console.log('[STEP] Clearing Sites header block by trash button...');
     const headerVisible = await headerArea.isVisible().catch(() => false);
@@ -1704,6 +1705,7 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
             await headerArea.waitFor({ state: 'visible', timeout: 15000 });
             await headerArea.click({ timeout: 10000 });
             await delay(sitesPage, 320);
+            await deleteHeaderBtn.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
             await deleteHeaderBtn.waitFor({ state: 'visible', timeout: 15000 });
             await deleteHeaderBtn.click({ timeout: 10000 });
         }, 'Delete Sites header by trash button', 4);
