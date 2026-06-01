@@ -8,7 +8,9 @@ const { chromium } = require('playwright');
 const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
-    DATA_SAFETY_USAGE_ACTIONS
+    DATA_SAFETY_USAGE_ACTIONS,
+    DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
 } = require('./data_safety_flow');
 const {
     buildTempDownloadRoot,
@@ -3863,6 +3865,131 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            const clickDataSafetyCheckboxBySelectors = async (selectors, label) => {
+                await retryAction(async () => {
+                    let target = null;
+                    for (const selector of selectors) {
+                        const candidate = page.locator(selector).first();
+                        if (await candidate.isVisible().catch(() => false)) {
+                            target = candidate;
+                            break;
+                        }
+                    }
+                    if (!target) {
+                        throw new Error(`${label} checkbox not found`);
+                    }
+
+                    await target.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                    const input = target.locator('input[type="checkbox"]').first();
+                    const isChecked = await input.isChecked().catch(() => false);
+                    if (!isChecked) {
+                        await target.click({ timeout: 10000 });
+                        await delay(page, 1000);
+                    }
+                }, `Data safety ${label}`, 4);
+                console.log(`[DATA SAFETY] Checked ${label}.`);
+                await delay(page, 1500);
+            };
+
+            const clickDataSafetyRadioGroupAnswer = async (groupSelectors, answerRegex, label) => {
+                await retryAction(async () => {
+                    let group = null;
+                    for (const selector of groupSelectors) {
+                        const candidate = page.locator(selector).first();
+                        if (await candidate.isVisible().catch(() => false)) {
+                            group = candidate;
+                            break;
+                        }
+                    }
+                    if (!group) {
+                        throw new Error(`${label} question group not found`);
+                    }
+
+                    const result = await group.evaluate((scope, { answer }) => {
+                        const answerPattern = new RegExp(answer.source, answer.flags);
+                        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                        const isVisible = (el) => {
+                            if (!el || !(el instanceof HTMLElement)) return false;
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.display !== 'none' &&
+                                style.visibility !== 'hidden' &&
+                                rect.width > 0 &&
+                                rect.height > 0;
+                        };
+                        const getInputLabelText = (input) => {
+                            const labelledBy = String(input.getAttribute('aria-labelledby') || '').trim();
+                            if (labelledBy) {
+                                const text = labelledBy
+                                    .split(/\s+/)
+                                    .map(id => document.getElementById(id))
+                                    .filter(Boolean)
+                                    .map(el => normalize(el.textContent))
+                                    .filter(Boolean)
+                                    .join(' ');
+                                if (text) return text;
+                            }
+                            if (input.id) {
+                                const labelEl = Array.from(document.querySelectorAll('label'))
+                                    .find(candidate => candidate.htmlFor === input.id);
+                                if (labelEl) return normalize(labelEl.textContent);
+                            }
+                            return '';
+                        };
+
+                        const optionRoots = Array.from(scope.querySelectorAll(
+                            'material-radio, label, .mdc-form-field, [role="radio"], .mdc-radio'
+                        )).filter(isVisible);
+
+                        for (const optionRoot of optionRoots) {
+                            const input = optionRoot.matches('input[type="radio"]')
+                                ? optionRoot
+                                : optionRoot.querySelector('input[type="radio"]');
+                            const optionText = [
+                                normalize(optionRoot.textContent),
+                                input ? getInputLabelText(input) : ''
+                            ].filter(Boolean).join(' ');
+                            if (!answerPattern.test(optionText)) continue;
+
+                            const checked = Boolean(
+                                (input && input.checked) ||
+                                (input && input.getAttribute('aria-checked') === 'true') ||
+                                optionRoot.getAttribute('aria-checked') === 'true' ||
+                                optionRoot.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
+                            );
+                            optionRoot.scrollIntoView({ block: 'center', inline: 'nearest' });
+                            if (!checked) {
+                                optionRoot.click();
+                                if (input && !input.checked && input.getAttribute('aria-checked') !== 'true') {
+                                    input.click();
+                                }
+                                if (input) {
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            }
+                            const selected = Boolean(
+                                (input && input.checked) ||
+                                (input && input.getAttribute('aria-checked') === 'true') ||
+                                optionRoot.getAttribute('aria-checked') === 'true' ||
+                                optionRoot.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
+                            );
+                            return { ok: selected, optionText };
+                        }
+
+                        return { ok: false, reason: 'answer option not found' };
+                    }, {
+                        answer: regexPayload(answerRegex)
+                    });
+
+                    if (!result || !result.ok) {
+                        throw new Error(`${label} not selected: ${(result && result.reason) || 'unknown reason'}`);
+                    }
+                }, `Data safety ${label}`, 4);
+                console.log(`[DATA SAFETY] Selected ${label}.`);
+                await delay(page, 1500);
+            };
+
             const clickDataSafetyCheckboxInScope = async (scopeLocator, answerRegex, label) => {
                 await retryAction(async () => {
                     await scopeLocator.waitFor({ state: 'visible', timeout: 30000 });
@@ -4039,9 +4166,24 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 console.log('[DATA SAFETY] Answering Data collection and security questions...');
                 for (const action of DATA_SAFETY_COLLECTION_SECURITY_ACTIONS) {
                     if (action.type === 'radio') {
-                        await clickDataSafetyRadioAnswer(action.question, action.answer, action.label);
+                        if (action.label === 'outside app login = No') {
+                            await clickDataSafetyRadioGroupAnswer(
+                                DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+                                action.answer,
+                                action.label
+                            );
+                        } else {
+                            await clickDataSafetyRadioAnswer(action.question, action.answer, action.label);
+                        }
                     } else if (action.type === 'checkbox') {
-                        await clickDataSafetyCheckbox(action.answer, action.label);
+                        if (action.label === 'no in-app account creation') {
+                            await clickDataSafetyCheckboxBySelectors(
+                                DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+                                action.label
+                            );
+                        } else {
+                            await clickDataSafetyCheckbox(action.answer, action.label);
+                        }
                     }
                 }
                 await delay(page, 2000);

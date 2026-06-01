@@ -71,8 +71,22 @@ const DATA_SAFETY_USAGE_ACTIONS = [
     }
 ];
 
+const DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS = [
+    'material-checkbox[debug-id="acm-checkboxes"]',
+    'material-checkbox:has(label:has-text("My app does not allow users to create an account"))',
+    'material-checkbox:has-text("My app does not allow users to create an account")'
+];
+
+const DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS = [
+    'material-radio-group[debug-id="has-outside-app-accounts"]',
+    'material-radio-group[aria-label*="created outside of the app"]',
+    '[role="radiogroup"][aria-label*="created outside of the app"]'
+];
+
 module.exports = {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
-    DATA_SAFETY_USAGE_ACTIONS
+    DATA_SAFETY_USAGE_ACTIONS,
+    DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
 };
