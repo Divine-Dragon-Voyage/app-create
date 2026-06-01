@@ -90,3 +90,11 @@ test('data deletion request controls use stable debug selectors', () => {
     assert.ok(DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS.includes('material-radio-group[debug-id="data-deletion"]'));
     assert.ok(DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS.includes('[role="radiogroup"][aria-label*="request that their data is deleted"]'));
 });
+
+test('data deletion request answer uses no under stable data deletion group', () => {
+    const deletionAction = DATA_SAFETY_COLLECTION_SECURITY_ACTIONS.find(action => action.label === 'data deletion request = No');
+    assert.ok(deletionAction);
+    assert.equal(deletionAction.type, 'radio');
+    assert.match('Do you provide a way for users to request that their data is deleted?', deletionAction.question);
+    assert.match('No', deletionAction.answer);
+});

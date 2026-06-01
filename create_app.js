@@ -4198,11 +4198,32 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                 action.label
                             );
                         } else if (action.label === 'data deletion request = No') {
-                            await clickDataSafetyRadioGroupAnswer(
-                                DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
-                                action.answer,
-                                action.label
-                            );
+                            const group = page
+                                .locator('material-radio-group[debug-id="data-deletion"]')
+                                .first();
+                            const noLabel = group
+                                .locator('label')
+                                .filter({ hasText: /^No$/i })
+                                .first();
+                            const noRadio = noLabel.locator('xpath=ancestor::material-radio[1]').first();
+                            await retryAction(async () => {
+                                await group.waitFor({ state: 'visible', timeout: 10000 });
+                                await noLabel.waitFor({ state: 'visible', timeout: 10000 });
+                                await clickLocatorRobust(noLabel, 'Data deletion request = No label', 10000);
+                                const selected = await noRadio.evaluate((radioRoot) => {
+                                    const input = radioRoot.querySelector('input[type="radio"]');
+                                    return Boolean(
+                                        (input && input.checked) ||
+                                        (input && input.getAttribute('aria-checked') === 'true') ||
+                                        radioRoot.getAttribute('aria-checked') === 'true' ||
+                                        radioRoot.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
+                                    );
+                                }).catch(() => false);
+
+                                if (!selected) {
+                                    await clickLocatorRobust(noRadio, 'Data deletion request = No radio', 10000);
+                                }
+                            }, `Data safety ${action.label}`, 4);
                         } else {
                             await clickDataSafetyRadioAnswer(action.question, action.answer, action.label);
                         }
