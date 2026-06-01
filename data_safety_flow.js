@@ -19,7 +19,7 @@ const DATA_SAFETY_COLLECTION_SECURITY_ACTIONS = [
     {
         label: 'outside app login = No',
         type: 'radio',
-        question: /Can users login to your app with accounts created outside of the app\?/i,
+        question: /Can users log(?:in| in) to your app with accounts created outside of the app\?/i,
         answer: /^No$/i
     },
     {

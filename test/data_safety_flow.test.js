@@ -34,6 +34,10 @@ test('data collection and security answers yes yes no-account no no', () => {
         DATA_SAFETY_COLLECTION_SECURITY_ACTIONS[3].question
     );
     assert.match(
+        'Can users log in to your app with accounts created outside of the app?',
+        DATA_SAFETY_COLLECTION_SECURITY_ACTIONS[3].question
+    );
+    assert.match(
         'Do you provide a way for users to request that their data is deleted?',
         DATA_SAFETY_COLLECTION_SECURITY_ACTIONS[4].question
     );
