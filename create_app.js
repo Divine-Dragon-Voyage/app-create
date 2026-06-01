@@ -3868,16 +3868,16 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await retryAction(async () => {
                     const checkbox = page
                         .locator('material-checkbox[debug-id="acm-checkboxes"]')
-                        .filter({ hasText: /^My app does not allow users to create an account$/i })
                         .first();
-                    const checkboxBox = checkbox.locator('div.mdc-checkbox').first();
+                    const checkboxLabel = checkbox.locator('.checkbox-content label').first();
                     const checkboxInput = checkbox.locator('input[type="checkbox"]').first();
                     const outsideGroup = page
                         .locator('material-radio-group[debug-id="has-outside-app-accounts"]')
                         .first();
 
                     await checkbox.waitFor({ state: 'visible', timeout: 10000 });
-                    await clickLocatorRobust(checkboxBox, 'My app does not allow users to create an account checkbox', 10000);
+                    await checkboxLabel.waitFor({ state: 'visible', timeout: 10000 });
+                    await clickLocatorRobust(checkboxLabel, 'My app does not allow users to create an account label', 10000);
 
                     const groupVisibleAfterFirstClick = await outsideGroup
                         .waitFor({ state: 'visible', timeout: 3000 })
@@ -3885,12 +3885,12 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         .catch(() => false);
                     if (!groupVisibleAfterFirstClick) {
                         const checkedAfterFirstClick = await checkboxInput.isChecked().catch(() => false);
-                        console.log('[DATA SAFETY] Outside app login group not visible after first click; retrying checkbox toggle.');
+                        console.log('[DATA SAFETY] Outside app login group not visible after first click; retrying label toggle.');
                         if (checkedAfterFirstClick) {
-                            await clickLocatorRobust(checkboxBox, 'My app does not allow users to create an account checkbox', 10000);
+                            await clickLocatorRobust(checkboxLabel, 'My app does not allow users to create an account label', 10000);
                             await delay(page, 700);
                         }
-                        await clickLocatorRobust(checkboxBox, 'My app does not allow users to create an account checkbox', 10000);
+                        await clickLocatorRobust(checkboxLabel, 'My app does not allow users to create an account label', 10000);
                     }
 
                     const groupVisibleAfterRetry = await outsideGroup
