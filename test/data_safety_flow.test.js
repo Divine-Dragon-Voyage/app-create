@@ -5,7 +5,8 @@ const {
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
-    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+    DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS
 } = require('../data_safety_flow');
 
 test('data collection and security answers yes yes no-account no no', () => {
@@ -83,4 +84,9 @@ test('data collection account creation controls use stable debug selectors', () 
     assert.ok(DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS.includes('material-checkbox[debug-id="acm-checkboxes"]'));
     assert.ok(DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS.includes('material-radio-group[debug-id="has-outside-app-accounts"]'));
     assert.ok(DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS.includes('[role="radiogroup"][aria-label*="created outside of the app"]'));
+});
+
+test('data deletion request controls use stable debug selectors', () => {
+    assert.ok(DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS.includes('material-radio-group[debug-id="data-deletion"]'));
+    assert.ok(DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS.includes('[role="radiogroup"][aria-label*="request that their data is deleted"]'));
 });

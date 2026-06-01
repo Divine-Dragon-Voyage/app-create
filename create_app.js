@@ -9,7 +9,8 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
-    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+    DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS
 } = require('./data_safety_flow');
 const {
     buildTempDownloadRoot,
@@ -4193,6 +4194,12 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         if (action.label === 'outside app login = No') {
                             await clickDataSafetyRadioGroupAnswer(
                                 DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+                                action.answer,
+                                action.label
+                            );
+                        } else if (action.label === 'data deletion request = No') {
+                            await clickDataSafetyRadioGroupAnswer(
+                                DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
                                 action.answer,
                                 action.label
                             );

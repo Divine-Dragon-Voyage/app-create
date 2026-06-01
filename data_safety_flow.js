@@ -83,10 +83,17 @@ const DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS = [
     '[role="radiogroup"][aria-label*="created outside of the app"]'
 ];
 
+const DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS = [
+    'material-radio-group[debug-id="data-deletion"]',
+    'material-radio-group[aria-label*="request that their data is deleted"]',
+    '[role="radiogroup"][aria-label*="request that their data is deleted"]'
+];
+
 module.exports = {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
-    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+    DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS
 };
