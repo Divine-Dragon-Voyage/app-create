@@ -4345,6 +4345,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const testAndReleaseUrl = `${appBasePath}/test-and-release`;
             const productionUrl = `${appBasePath}/tracks/production`;
             const productionCountryAvailabilityUrl = `${productionUrl}?tab=countryAvailability`;
+            const countriesRegionsPattern = /Countries\s*\/\s*regions/i;
+            const addCountriesRegionsPattern = /Add countries\s*\/\s*regions/i;
             const testAndReleaseLink = page.locator(
                 'a[href*="/test-and-release"], a.item-link:has(.item-label:has-text("Test and release"))'
             ).first();
@@ -4352,11 +4354,11 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 'a[href*="/tracks/production"], a.item-link:has(.item-label:has-text("Production"))'
             ).first();
             const countriesRegionsTab = page.locator(
-                '[role="tab"]:has-text("Countries / regions"), a:has-text("Countries / regions"), button:has-text("Countries / regions")'
-            ).first();
+                '[role="tab"], tab-button, a, button'
+            ).filter({ hasText: countriesRegionsPattern }).first();
             const addCountriesBtn = page.locator(
-                'button:has-text("Add countries / regions"), [role="button"]:has-text("Add countries / regions"), a:has-text("Add countries / regions"), .mdc-button:has-text("Add countries / regions")'
-            ).first();
+                'button, [role="button"], a'
+            ).filter({ hasText: addCountriesRegionsPattern }).first();
 
             // 8. Test and release
             console.log('Navigating to "Test and release"...');
@@ -4391,7 +4393,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 const countriesTabVisible = await countriesRegionsTab.isVisible().catch(() => false);
                 const addButtonVisible = await addCountriesBtn.isVisible().catch(() => false);
                 if (!countriesTabVisible && !addButtonVisible) {
-                    throw new Error('Production page loaded but Countries/regions controls are not ready yet.');
+                    console.log('[RELEASE] Production page loaded but Countries/regions controls are not visible yet; continuing with fallback navigation.');
                 }
             }, 'Open Production', 3);
             await delay(page, 3000);
