@@ -3866,16 +3866,18 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
             const selectNoInAppAccountCreation = async () => {
                 await retryAction(async () => {
-                    const checkbox = page
-                        .locator('material-checkbox[debug-id="acm-checkboxes"]')
+                    const accountCreationGroup = page
+                        .locator('div[role="group"][aria-label*="Which of the following methods of account creation does your app support"]')
                         .first();
-                    const checkboxLabel = checkbox.locator('.checkbox-content label').first();
-                    const checkboxInput = checkbox.locator('input[type="checkbox"]').first();
+                    const checkboxLabel = accountCreationGroup
+                        .locator('label')
+                        .filter({ hasText: /^My app does not allow users to create an account$/i })
+                        .first();
                     const outsideGroup = page
                         .locator('material-radio-group[debug-id="has-outside-app-accounts"]')
                         .first();
 
-                    await checkbox.waitFor({ state: 'visible', timeout: 10000 });
+                    await accountCreationGroup.waitFor({ state: 'visible', timeout: 10000 });
                     await checkboxLabel.waitFor({ state: 'visible', timeout: 10000 });
                     await clickLocatorRobust(checkboxLabel, 'My app does not allow users to create an account label', 10000);
 
@@ -3884,7 +3886,15 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         .then(() => true)
                         .catch(() => false);
                     if (!groupVisibleAfterFirstClick) {
-                        const checkedAfterFirstClick = await checkboxInput.isChecked().catch(() => false);
+                        const checkedAfterFirstClick = await checkboxLabel.evaluate((label) => {
+                            const checkbox = label.closest('material-checkbox');
+                            const input = checkbox && checkbox.querySelector('input[type="checkbox"]');
+                            return Boolean(
+                                (input && input.checked) ||
+                                (input && input.getAttribute('aria-checked') === 'true') ||
+                                (checkbox && checkbox.querySelector('.mdc-checkbox--selected, input[type="checkbox"]:checked, [aria-checked="true"]'))
+                            );
+                        }).catch(() => false);
                         console.log('[DATA SAFETY] Outside app login group not visible after first click; retrying label toggle.');
                         if (checkedAfterFirstClick) {
                             await clickLocatorRobust(checkboxLabel, 'My app does not allow users to create an account label', 10000);
