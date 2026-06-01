@@ -9,8 +9,6 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
-    DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
-    DATA_SAFETY_ACCOUNT_CREATION_METHOD_CHECKBOX_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
 } = require('./data_safety_flow');
 const {
@@ -3868,35 +3866,37 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
             const selectNoInAppAccountCreation = async () => {
                 await retryAction(async () => {
-                    const checkbox = page.locator('material-checkbox[debug-id="acm-checkboxes"]').first();
-                    const checkboxInput = page.locator(
-                        'material-checkbox[debug-id="acm-checkboxes"] input[type="checkbox"]'
-                    ).first();
-                    const outsideGroup = page.locator(
-                        'material-radio-group[debug-id="has-outside-app-accounts"], ' +
-                        'material-radio-group[aria-label*="created outside of the app"], ' +
-                        '[role="radiogroup"][aria-label*="created outside of the app"]'
-                    ).first();
+                    const checkbox = page
+                        .locator('material-checkbox[debug-id="acm-checkboxes"]')
+                        .filter({ hasText: /^My app does not allow users to create an account$/i })
+                        .first();
+                    const checkboxBox = checkbox.locator('div.mdc-checkbox').first();
+                    const checkboxInput = checkbox.locator('input[type="checkbox"]').first();
+                    const outsideGroup = page
+                        .locator('material-radio-group[debug-id="has-outside-app-accounts"]')
+                        .first();
 
                     await checkbox.waitFor({ state: 'visible', timeout: 10000 });
-                    await clickLocatorRobust(checkbox, 'My app does not allow users to create an account checkbox', 10000);
-                    await delay(page, 2000);
+                    await clickLocatorRobust(checkboxBox, 'My app does not allow users to create an account checkbox', 10000);
 
-                    const groupVisibleAfterFirstClick = await outsideGroup.isVisible().catch(() => false);
+                    const groupVisibleAfterFirstClick = await outsideGroup
+                        .waitFor({ state: 'visible', timeout: 3000 })
+                        .then(() => true)
+                        .catch(() => false);
                     if (!groupVisibleAfterFirstClick) {
                         const checkedAfterFirstClick = await checkboxInput.isChecked().catch(() => false);
                         console.log('[DATA SAFETY] Outside app login group not visible after first click; retrying checkbox toggle.');
                         if (checkedAfterFirstClick) {
-                            await clickLocatorRobust(checkbox, 'My app does not allow users to create an account checkbox', 10000);
+                            await clickLocatorRobust(checkboxBox, 'My app does not allow users to create an account checkbox', 10000);
                             await delay(page, 700);
-                            await clickLocatorRobust(checkbox, 'My app does not allow users to create an account checkbox', 10000);
-                        } else {
-                            await clickLocatorRobust(checkbox, 'My app does not allow users to create an account checkbox', 10000);
                         }
-                        await delay(page, 2000);
+                        await clickLocatorRobust(checkboxBox, 'My app does not allow users to create an account checkbox', 10000);
                     }
 
-                    const groupVisibleAfterRetry = await outsideGroup.isVisible().catch(() => false);
+                    const groupVisibleAfterRetry = await outsideGroup
+                        .waitFor({ state: 'visible', timeout: 3000 })
+                        .then(() => true)
+                        .catch(() => false);
                     if (!groupVisibleAfterRetry) {
                         throw new Error('outside app login question group not found');
                     }
