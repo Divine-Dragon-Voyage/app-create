@@ -15,9 +15,9 @@ const {
     shouldCloseAuxiliaryPage
 } = require('./cleanup_helpers');
 const {
-    FINANCIAL_FEATURES_MORE_OPTIONS_SELECTORS,
-    FINANCIAL_FEATURES_SAVE_MENU_SELECTORS
-} = require('./financial_features_flow');
+    OVERFLOW_MORE_OPTIONS_SELECTORS,
+    OVERFLOW_SAVE_MENU_SELECTORS
+} = require('./overflow_save_flow');
 
 // Default delay (ms). Increase if VPS is slow.
 const DELAY = 3000;
@@ -2373,11 +2373,11 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickMainButtonOn(page, text);
         }
 
-        async function clickFinancialFeaturesSaveFallback() {
-            console.log('[FINANCE] Main Save button not found; trying More options -> Save fallback...');
+        async function clickOverflowSaveFallback(contextLabel = 'Save') {
+            console.log(`[SAVE] ${contextLabel}: trying More options -> Save fallback...`);
             await retryAction(async () => {
                 let moreOptionsButton = null;
-                for (const selector of FINANCIAL_FEATURES_MORE_OPTIONS_SELECTORS) {
+                for (const selector of OVERFLOW_MORE_OPTIONS_SELECTORS) {
                     const candidate = page.locator(selector).last();
                     if (await candidate.isVisible().catch(() => false)) {
                         moreOptionsButton = candidate;
@@ -2385,14 +2385,14 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     }
                 }
                 if (!moreOptionsButton) {
-                    throw new Error('Financial features More options button not found.');
+                    throw new Error(`${contextLabel} More options button not found.`);
                 }
 
-                await clickLocatorRobust(moreOptionsButton, 'Financial features More options button', 10000);
+                await clickLocatorRobust(moreOptionsButton, `${contextLabel} More options button`, 10000);
                 await delay(page, 1000);
 
                 let saveMenuItem = null;
-                for (const selector of FINANCIAL_FEATURES_SAVE_MENU_SELECTORS) {
+                for (const selector of OVERFLOW_SAVE_MENU_SELECTORS) {
                     const candidate = page.locator(selector).last();
                     if (await candidate.isVisible().catch(() => false)) {
                         saveMenuItem = candidate;
@@ -2400,15 +2400,15 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     }
                 }
                 if (!saveMenuItem) {
-                    throw new Error('Financial features Save menu item not found.');
+                    throw new Error(`${contextLabel} Save menu item not found.`);
                 }
 
-                await clickLocatorRobust(saveMenuItem, 'Financial features Save menu item', 10000);
+                await clickLocatorRobust(saveMenuItem, `${contextLabel} Save menu item`, 10000);
                 await delay(page, 3000);
-            }, 'Financial features More options Save fallback', 3);
+            }, `${contextLabel} More options Save fallback`, 3);
         }
 
-        async function clickFinancialFeaturesSave() {
+        async function clickSaveWithOverflowFallback(contextLabel = 'Save') {
             try {
                 await clickMainButton('Save');
             } catch (err) {
@@ -2416,8 +2416,12 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 if (!/Main button with text "Save" not found/i.test(message)) {
                     throw err;
                 }
-                await clickFinancialFeaturesSaveFallback();
+                await clickOverflowSaveFallback(contextLabel);
             }
+        }
+
+        async function clickFinancialFeaturesSave() {
+            await clickSaveWithOverflowFallback('Financial features');
         }
 
         async function fillFirstVisibleInput(selectors, value, label) {
@@ -3624,6 +3628,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     await page.locator('text=/Device or other IDs/i').first().isVisible().catch(() => false);
             };
 
+            const isDataSafetyPreviewStepVisible = async () => {
+                return await page.locator('text=/Store listing preview/i').first().isVisible().catch(() => false);
+            };
+
             const clickDataSafetyRadioAnswer = async (questionRegex, answerRegex, label) => {
                 await retryAction(async () => {
                     const result = await page.evaluate(({ question, answer }) => {
@@ -4193,6 +4201,18 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }
                 if (await isDataUsageStepVisible()) {
                     await answerDataSafetyDeviceIdsUsage();
+                }
+
+                if (await isDataSafetyPreviewStepVisible()) {
+                    if (await isButtonEnabled(saveBtn)) {
+                        await clickMainSaveButton('Save (preview)');
+                    } else {
+                        await clickOverflowSaveFallback('Data safety preview');
+                    }
+                    await waitSaved(page);
+                    await delay(page, 3000);
+                    markStepDone(PROGRESS_STEP_SAFETY_DONE);
+                    return;
                 }
 
                 // Follow document flow: answer current step, Next through pages, Save at end.
