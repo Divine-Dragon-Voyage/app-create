@@ -10,6 +10,7 @@ const {
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+    DATA_SAFETY_ACCOUNT_CREATION_METHOD_CHECKBOX_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
 } = require('./data_safety_flow');
 const {
@@ -3891,12 +3892,62 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            const uncheckDataSafetyCheckboxesBySelectors = async (selectors, label) => {
+                await retryAction(async () => {
+                    let touched = 0;
+                    for (const selector of selectors) {
+                        const count = await page.locator(selector).count().catch(() => 0);
+                        for (let index = 0; index < count; index++) {
+                            const candidate = page.locator(selector).nth(index);
+                            if (!(await candidate.isVisible().catch(() => false))) {
+                                continue;
+                            }
+                            const input = candidate.locator('input[type="checkbox"]').first();
+                            const isChecked = await input.isChecked().catch(() => false);
+                            if (isChecked) {
+                                await candidate.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                                await candidate.click({ timeout: 10000 });
+                                touched++;
+                                await delay(page, 500);
+                            }
+                        }
+                    }
+                    console.log(`[DATA SAFETY] Cleared ${touched} ${label} checkbox(es).`);
+                }, `Data safety clear ${label}`, 3);
+            };
+
+            const waitForDataSafetyGroup = async (selectors, label, timeoutMs = 10000) => {
+                for (const selector of selectors) {
+                    const candidate = page.locator(selector).first();
+                    if (await candidate.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => true).catch(() => false)) {
+                        return candidate;
+                    }
+                }
+                throw new Error(`${label} question group not found`);
+            };
+
+            const selectNoInAppAccountCreation = async () => {
+                await uncheckDataSafetyCheckboxesBySelectors(
+                    DATA_SAFETY_ACCOUNT_CREATION_METHOD_CHECKBOX_SELECTORS,
+                    'account creation method'
+                );
+                await clickDataSafetyCheckboxBySelectors(
+                    DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+                    'no in-app account creation'
+                );
+                await waitForDataSafetyGroup(
+                    DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+                    'outside app login',
+                    15000
+                );
+            };
+
             const clickDataSafetyRadioGroupAnswer = async (groupSelectors, answerRegex, label) => {
                 await retryAction(async () => {
                     let group = null;
                     for (const selector of groupSelectors) {
                         const candidate = page.locator(selector).first();
-                        if (await candidate.isVisible().catch(() => false)) {
+                        if (await candidate.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
                             group = candidate;
                             break;
                         }
@@ -4177,10 +4228,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         }
                     } else if (action.type === 'checkbox') {
                         if (action.label === 'no in-app account creation') {
-                            await clickDataSafetyCheckboxBySelectors(
-                                DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
-                                action.label
-                            );
+                            await selectNoInAppAccountCreation();
                         } else {
                             await clickDataSafetyCheckbox(action.answer, action.label);
                         }

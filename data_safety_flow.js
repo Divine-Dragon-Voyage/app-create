@@ -77,6 +77,15 @@ const DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS = [
     'material-checkbox:has-text("My app does not allow users to create an account")'
 ];
 
+const DATA_SAFETY_ACCOUNT_CREATION_METHOD_CHECKBOX_SELECTORS = [
+    'material-checkbox[debug-id="account-creation-method-checkboxes"]',
+    'material-checkbox:has-text("Username and password")',
+    'material-checkbox:has-text("Username and other authentication")',
+    'material-checkbox:has-text("Username, password, and other authentication")',
+    'material-checkbox:has-text("OAuth")',
+    'material-checkbox:has-text("Other")'
+];
+
 const DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS = [
     'material-radio-group[debug-id="has-outside-app-accounts"]',
     'material-radio-group[aria-label*="created outside of the app"]',
@@ -88,5 +97,6 @@ module.exports = {
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+    DATA_SAFETY_ACCOUNT_CREATION_METHOD_CHECKBOX_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS
 };
