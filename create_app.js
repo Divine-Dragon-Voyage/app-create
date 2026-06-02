@@ -4203,20 +4203,28 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                             );
                         } else if (action.label === 'data deletion request = No') {
                             await retryAction(async () => {
-                                const result = await page.evaluate((config) => {
+                                const target = await page.evaluate((config) => {
                                     const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-                                    const isVisible = (el) => {
+                                    const visibleRect = (el) => {
                                         if (!el || !(el instanceof HTMLElement)) return false;
                                         const style = window.getComputedStyle(el);
                                         const rect = el.getBoundingClientRect();
-                                        return style.display !== 'none' &&
+                                        if (style.display !== 'none' &&
                                             style.visibility !== 'hidden' &&
                                             rect.width > 0 &&
-                                            rect.height > 0;
+                                            rect.height > 0) {
+                                            return rect;
+                                        }
+                                        return null;
                                     };
-                                    const group = config.groupSelectors
+                                    const groups = config.groupSelectors
                                         .map(selector => document.querySelector(selector))
-                                        .find(isVisible);
+                                        .filter(Boolean);
+                                    const group = groups.find((candidate) => {
+                                        if (visibleRect(candidate)) return true;
+                                        return Array.from(candidate.querySelectorAll(`${config.radioSelector} .mdc-radio, ${config.radioSelector} label`))
+                                            .some(visibleRect);
+                                    });
                                     if (!group) {
                                         return { ok: false, reason: 'data-deletion group not visible' };
                                     }
@@ -4235,27 +4243,22 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                     const input = targetRadio.querySelector('input[type="radio"]');
                                     const label = targetRadio.querySelector('label');
                                     const mdcRadio = targetRadio.querySelector('.mdc-radio');
-                                    const targets = [mdcRadio, label, input, targetRadio].filter(Boolean);
-                                    for (const target of targets) {
-                                        target.scrollIntoView({ block: 'center', inline: 'nearest' });
-                                        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-                                        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-                                        target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                                    }
-                                    if (input) {
-                                        input.checked = true;
-                                        input.setAttribute('aria-checked', 'true');
-                                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    const clickTarget = mdcRadio || label || input || targetRadio;
+                                    clickTarget.scrollIntoView({ block: 'center', inline: 'nearest' });
+                                    const rect = visibleRect(clickTarget) || visibleRect(label) || visibleRect(mdcRadio) || visibleRect(input);
+                                    if (!rect) {
+                                        return {
+                                            ok: false,
+                                            reason: `target radio has no visible click rect; label=${normalize(label && label.textContent)}; direct radio count=${directRadios.length}`
+                                        };
                                     }
                                     return {
-                                        ok: Boolean(
-                                            (input && input.checked) ||
-                                            (input && input.getAttribute('aria-checked') === 'true') ||
-                                            targetRadio.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
-                                        ),
+                                        ok: true,
+                                        x: rect.left + rect.width / 2,
+                                        y: rect.top + rect.height / 2,
                                         label: normalize(label && label.textContent),
-                                        directRadioCount: directRadios.length
+                                        directRadioCount: directRadios.length,
+                                        options: directRadios.map(radio => normalize(radio.querySelector('label') && radio.querySelector('label').textContent))
                                     };
                                 }, {
                                     groupSelectors: DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
@@ -4263,12 +4266,51 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                     answerText: DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
                                     fallbackIndex: DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX
                                 });
+
+                                if (!target || !target.ok || target.label !== DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT) {
+                                    const reason = target && target.reason
+                                        ? target.reason
+                                        : `target=${target && target.label}, directRadioCount=${target && target.directRadioCount}, options=${target && target.options}`;
+                                    throw new Error(`Data deletion request = No target not found: ${reason}`);
+                                }
+
+                                console.log(`[DATA SAFETY] Data deletion options: ${(target.options || []).join(' | ')}; clicking "${target.label}" at ${Math.round(target.x)},${Math.round(target.y)}.`);
+                                await page.mouse.click(target.x, target.y);
                                 await delay(page, 1000);
-                                if (!result || !result.ok || result.label !== DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT) {
-                                    const reason = result && result.reason
-                                        ? result.reason
-                                        : `selected=${result && result.label}, directRadioCount=${result && result.directRadioCount}`;
-                                    throw new Error(`Data deletion request = No not selected: ${reason}`);
+
+                                const selected = await page.evaluate((config) => {
+                                    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                                    const group = config.groupSelectors
+                                        .map(selector => document.querySelector(selector))
+                                        .find(Boolean);
+                                    if (!group) return { ok: false, reason: 'data-deletion group not found after click' };
+                                    const directRadios = Array.from(group.children)
+                                        .filter(child => child.matches && child.matches(config.radioSelector));
+                                    const targetRadio = directRadios.find((radio) => {
+                                        const label = radio.querySelector('label');
+                                        return normalize(label && label.textContent) === config.answerText;
+                                    });
+                                    if (!targetRadio) return { ok: false, reason: 'target radio not found after click' };
+                                    const input = targetRadio.querySelector('input[type="radio"]');
+                                    return {
+                                        ok: Boolean(
+                                            (input && input.checked) ||
+                                            (input && input.getAttribute('aria-checked') === 'true') ||
+                                            targetRadio.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
+                                        ),
+                                        ariaChecked: input && input.getAttribute('aria-checked'),
+                                        checked: input && input.checked
+                                    };
+                                }, {
+                                    groupSelectors: DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
+                                    radioSelector: DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
+                                    answerText: DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
+                                });
+                                if (!selected || !selected.ok) {
+                                    const reason = selected && selected.reason
+                                        ? selected.reason
+                                        : `checked=${selected && selected.checked}, ariaChecked=${selected && selected.ariaChecked}`;
+                                    throw new Error(`Data deletion request = No not selected after mouse click: ${reason}`);
                                 }
                             }, `Data safety ${action.label}`, 4);
                         } else {
