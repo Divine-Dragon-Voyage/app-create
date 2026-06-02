@@ -8,7 +8,9 @@ const {
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
     DATA_SAFETY_SECTION_SELECTORS,
     DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
-    DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX
+    DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX,
+    DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
+    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
 } = require('../data_safety_flow');
 
 test('data collection and security answers yes yes no-account no no', () => {
@@ -101,4 +103,6 @@ test('data deletion request answer uses no under stable data deletion group', ()
     assert.match('Do you provide a way for users to request that their data is deleted?', deletionAction.question);
     assert.match('No', deletionAction.answer);
     assert.equal(DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX, 1);
+    assert.equal(DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR, 'material-radio');
+    assert.equal(DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT, 'No');
 });
