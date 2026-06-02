@@ -73,16 +73,19 @@ const DATA_SAFETY_USAGE_ACTIONS = [
     {
         label: 'Collected',
         type: 'checkbox',
+        selector: 'material-checkbox[debug-id="collected-checkbox"]',
         answer: /^Collected$/i
     },
     {
         label: 'processed ephemerally',
         type: 'radio',
+        groupSelector: 'material-radio-group[debug-id="ephemerality-question"]',
         answer: /Yes,\s*this collected data is processed ephemerally/i
     },
     {
         label: 'data collection required',
         type: 'radio',
+        groupSelector: 'material-radio-group[debug-id="user-control-question"]',
         answer: /Data collection is required/i
     },
     {

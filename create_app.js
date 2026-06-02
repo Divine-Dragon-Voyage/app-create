@@ -4127,10 +4127,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
-            const clickDataSafetyCheckboxInScope = async (scopeLocator, answerRegex, label) => {
+            const clickDataSafetyCheckboxInScope = async (scopeLocator, answerRegex, label, selector = '') => {
                 await retryAction(async () => {
                     await scopeLocator.waitFor({ state: 'visible', timeout: 30000 });
-                    const result = await scopeLocator.evaluate((scope, { answer }) => {
+                    const result = await scopeLocator.evaluate((scope, { answer, selector }) => {
                         const answerPattern = new RegExp(answer.source, answer.flags);
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
                         const isVisible = (el) => {
@@ -4148,16 +4148,30 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                             (root && root.getAttribute('aria-checked') === 'true') ||
                             (root && root.querySelector('input[type="checkbox"]:checked, .mdc-checkbox--selected, [aria-checked="true"]'))
                         );
-                        const checkboxRoots = Array.from(scope.querySelectorAll(
-                            'material-checkbox, label, .mdc-form-field, [role="checkbox"], .mdc-checkbox'
-                        )).filter(isVisible);
+                        const resolveCheckboxRoot = (candidate) => {
+                            if (!candidate) return null;
+                            return candidate.matches && candidate.matches('material-checkbox')
+                                ? candidate
+                                : candidate.closest('material-checkbox') || candidate;
+                        };
 
-                        let targetRoot = checkboxRoots.find(root => answerPattern.test(normalize(root.textContent)));
+                        let targetRoot = selector
+                            ? resolveCheckboxRoot(scope.querySelector(selector))
+                            : null;
                         let input = null;
                         if (targetRoot) {
-                            input = targetRoot.matches('input[type="checkbox"]')
+                            input = targetRoot.matches && targetRoot.matches('input[type="checkbox"]')
                                 ? targetRoot
                                 : targetRoot.querySelector('input[type="checkbox"]');
+                        }
+
+                        if (!targetRoot) {
+                            const checkboxRoots = Array.from(scope.querySelectorAll('material-checkbox'))
+                                .filter(isVisible);
+                            targetRoot = checkboxRoots.find(root => answerPattern.test(normalize(root.textContent)));
+                            if (targetRoot) {
+                                input = targetRoot.querySelector('input[type="checkbox"]');
+                            }
                         }
 
                         if (!targetRoot || !input) {
@@ -4177,8 +4191,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                             if (!input && labelEl.htmlFor) {
                                 input = document.getElementById(labelEl.htmlFor);
                             }
-                            targetRoot = labelEl.closest('material-checkbox, label, .mdc-form-field, [role="checkbox"]') ||
-                                (input && input.closest('material-checkbox, label, .mdc-form-field, [role="checkbox"]')) ||
+                            targetRoot = labelEl.closest('material-checkbox') ||
+                                (input && input.closest('material-checkbox')) ||
+                                labelEl.closest('label, .mdc-form-field, [role="checkbox"]') ||
+                                (input && input.closest('label, .mdc-form-field, [role="checkbox"]')) ||
                                 labelEl.parentElement;
                         }
 
@@ -4192,7 +4208,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         const clickRoot = targetRoot || input.closest('material-checkbox, label, .mdc-form-field, [role="checkbox"]') || input;
                         clickRoot.scrollIntoView({ block: 'center', inline: 'nearest' });
                         if (!isChecked(clickRoot, input)) {
-                            clickRoot.click();
+                            const mdcCheckbox = clickRoot.querySelector('.mdc-checkbox') || clickRoot;
+                            mdcCheckbox.click();
                             if (!input.checked && input.getAttribute('aria-checked') !== 'true') {
                                 input.click();
                             }
@@ -4201,7 +4218,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                         }
                         return { ok: isChecked(clickRoot, input) };
                     }, {
-                        answer: regexPayload(answerRegex)
+                        answer: regexPayload(answerRegex),
+                        selector
                     });
 
                     if (!result || !result.ok) {
@@ -4212,10 +4230,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
-            const clickDataSafetyRadioInScope = async (scopeLocator, answerRegex, label) => {
+            const clickDataSafetyRadioInScope = async (scopeLocator, answerRegex, label, groupSelector = '') => {
                 await retryAction(async () => {
                     await scopeLocator.waitFor({ state: 'visible', timeout: 30000 });
-                    const result = await scopeLocator.evaluate((scope, { answer }) => {
+                    const result = await scopeLocator.evaluate((scope, { answer, groupSelector }) => {
                         const answerPattern = new RegExp(answer.source, answer.flags);
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
                         const isVisible = (el) => {
@@ -4242,13 +4260,15 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                             if (input.id) {
                                 const labelEl = Array.from(document.querySelectorAll('label'))
                                     .find(candidate => candidate.htmlFor === input.id);
-                                if (labelEl) return normalize(labelEl.textContent);
+                            if (labelEl) return normalize(labelEl.textContent);
                             }
                             return '';
                         };
-                        const optionRoots = Array.from(scope.querySelectorAll(
-                            'material-radio, label, .mdc-form-field, [role="radio"], .mdc-radio'
-                        )).filter(isVisible);
+                        const searchRoot = groupSelector && scope.querySelector(groupSelector)
+                            ? scope.querySelector(groupSelector)
+                            : scope;
+                        const optionRoots = Array.from(searchRoot.querySelectorAll('material-radio'))
+                            .filter(isVisible);
 
                         for (const optionRoot of optionRoots) {
                             const input = optionRoot.matches('input[type="radio"]')
@@ -4268,7 +4288,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                             );
                             optionRoot.scrollIntoView({ block: 'center', inline: 'nearest' });
                             if (!checked) {
-                                optionRoot.click();
+                                const target = optionRoot.querySelector('.mdc-radio') || optionRoot.querySelector('label') || optionRoot;
+                                target.click();
                                 if (input && !input.checked && input.getAttribute('aria-checked') !== 'true') {
                                     input.click();
                                 }
@@ -4288,7 +4309,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
                         return { ok: false, reason: 'radio option not found' };
                     }, {
-                        answer: regexPayload(answerRegex)
+                        answer: regexPayload(answerRegex),
+                        groupSelector
                     });
 
                     if (!result || !result.ok) {
@@ -4675,9 +4697,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
                 for (const action of DATA_SAFETY_USAGE_ACTIONS) {
                     if (action.type === 'checkbox') {
-                        await clickDataSafetyCheckboxInScope(dialog, action.answer, action.label);
+                        await clickDataSafetyCheckboxInScope(dialog, action.answer, action.label, action.selector || '');
                     } else if (action.type === 'radio') {
-                        await clickDataSafetyRadioInScope(dialog, action.answer, action.label);
+                        await clickDataSafetyRadioInScope(dialog, action.answer, action.label, action.groupSelector || '');
                     } else if (action.type === 'save') {
                         const saveButton = dialog.locator(
                             'button[debug-id="save-button"], button:has-text("Save"), [role="button"]:has-text("Save")'
