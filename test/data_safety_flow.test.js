@@ -4,6 +4,8 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT,
+    DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
     DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
@@ -58,6 +60,8 @@ test('data collection and security answers yes yes no-account no no', () => {
 });
 
 test('data types selects only device or other ids', () => {
+    assert.equal(DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT, 'Device or other IDs');
+    assert.equal(DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS, 5000);
     assert.deepEqual(
         DATA_SAFETY_DATA_TYPES_ACTIONS.map(action => ({
             type: action.type,

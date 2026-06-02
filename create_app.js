@@ -9,6 +9,8 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT,
+    DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS,
     DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
     DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_USAGE_ACTIONS,
@@ -3694,6 +3696,18 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 3000);
             };
 
+            const waitForDataSafetyNextEnabled = async (timeoutMs = 5000) => {
+                const started = Date.now();
+                while (Date.now() - started < timeoutMs) {
+                    const nextButton = await getDataSafetyNextButton();
+                    if (nextButton && await isButtonEnabled(nextButton)) {
+                        return true;
+                    }
+                    await delay(page, 500);
+                }
+                return false;
+            };
+
             const regexPayload = (regex) => ({
                 source: regex.source,
                 flags: regex.flags
@@ -4473,10 +4487,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }, 'Open Device or other IDs data type', 4);
                 await delay(page, 2000);
 
-                await retryAction(async () => {
-                    const result = await page.evaluate(({ answer }) => {
-                        const answerPattern = new RegExp(answer.source, answer.flags);
+                const findDeviceIdsCheckboxTarget = async () => {
+                    return await page.evaluate(({ answerText }) => {
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                        const targetText = normalize(answerText).toLowerCase();
                         const isVisible = (el) => {
                             if (!el || !(el instanceof HTMLElement)) return false;
                             const style = window.getComputedStyle(el);
@@ -4486,55 +4500,150 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                 rect.width > 0 &&
                                 rect.height > 0;
                         };
-                        const checkboxRoots = Array.from(document.querySelectorAll(
-                            'material-checkbox, label, .mdc-form-field, [role="checkbox"], .mdc-checkbox'
-                        )).filter(isVisible);
-                        for (const root of checkboxRoots) {
-                            const input = root.matches('input[type="checkbox"]')
-                                ? root
-                                : root.querySelector('input[type="checkbox"]');
+                        const getVisibleRect = (el) => {
+                            if (!isVisible(el)) return null;
+                            const rect = el.getBoundingClientRect();
+                            return {
+                                x: rect.left,
+                                y: rect.top,
+                                width: rect.width,
+                                height: rect.height
+                            };
+                        };
+                        const getLabelledText = (input) => {
                             const labelledBy = input ? String(input.getAttribute('aria-labelledby') || '') : '';
-                            const labelledText = labelledBy
+                            return labelledBy
                                 .split(/\s+/)
                                 .map(id => document.getElementById(id))
                                 .filter(Boolean)
                                 .map(el => normalize(el.textContent))
                                 .join(' ');
-                            const optionText = `${normalize(root.textContent)} ${labelledText}`.trim();
-                            if (!answerPattern.test(optionText)) continue;
+                        };
+                        const checkboxRoots = Array.from(document.querySelectorAll('material-checkbox'))
+                            .filter(isVisible);
 
-                            root.scrollIntoView({ block: 'center', inline: 'nearest' });
-                            const checked = Boolean(
-                                (input && input.checked) ||
-                                (input && input.getAttribute('aria-checked') === 'true') ||
-                                root.getAttribute('aria-checked') === 'true' ||
-                                root.querySelector('input[type="checkbox"]:checked, .mdc-checkbox--selected, [aria-checked="true"]')
+                        for (const root of checkboxRoots) {
+                            const input = root.querySelector('input[type="checkbox"]');
+                            const optionText = normalize(`${root.textContent || ''} ${getLabelledText(input)}`);
+                            if (!optionText.toLowerCase().includes(targetText)) continue;
+                            const disabled = root.getAttribute('aria-disabled') === 'true' ||
+                                root.classList.contains('disabled') ||
+                                Boolean(input && input.disabled);
+                            if (disabled) continue;
+
+                            const checkbox = root.querySelector('.mdc-checkbox') || input || root;
+                            checkbox.scrollIntoView({ block: 'center', inline: 'nearest' });
+                            const checkboxRect = getVisibleRect(checkbox);
+                            const labelRect = getVisibleRect(root.querySelector('.checkbox-content, label')) || checkboxRect;
+                            const clickRect = checkboxRect || labelRect || getVisibleRect(root);
+                            if (!clickRect) continue;
+
+                            const inputChecked = Boolean(input && input.checked);
+                            const ariaChecked = input
+                                ? String(input.getAttribute('aria-checked') || '')
+                                : String(root.getAttribute('aria-checked') || '');
+                            const visualSelected = Boolean(
+                                root.querySelector('.mdc-checkbox--selected, input[type="checkbox"]:checked, [aria-checked="true"]')
                             );
-                            if (!checked) {
-                                root.click();
-                                if (input && !input.checked && input.getAttribute('aria-checked') !== 'true') {
-                                    input.click();
-                                }
-                                if (input) {
-                                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                            return {
+                                ok: true,
+                                optionText,
+                                x: clickRect.x + clickRect.width / 2,
+                                y: clickRect.y + clickRect.height / 2,
+                                labelX: labelRect ? labelRect.x + labelRect.width / 2 : clickRect.x + clickRect.width / 2,
+                                labelY: labelRect ? labelRect.y + labelRect.height / 2 : clickRect.y + clickRect.height / 2,
+                                inputChecked,
+                                ariaChecked,
+                                visualSelected,
+                                modelSelected: inputChecked || ariaChecked === 'true'
+                            };
+                        }
+
+                        return { ok: false, reason: 'Device or other IDs checkbox not found' };
+                    }, { answerText: DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT });
+                };
+
+                const dispatchDeviceIdsCheckboxEvents = async () => {
+                    return await page.evaluate(({ answerText }) => {
+                        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                        const targetText = normalize(answerText).toLowerCase();
+                        const roots = Array.from(document.querySelectorAll('material-checkbox'));
+                        for (const root of roots) {
+                            const input = root.querySelector('input[type="checkbox"]');
+                            const text = normalize(root.textContent).toLowerCase();
+                            if (!input || !text.includes(targetText)) continue;
+                            input.focus();
+                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                            input.blur();
+                            return {
+                                ok: true,
+                                inputChecked: Boolean(input.checked),
+                                ariaChecked: String(input.getAttribute('aria-checked') || '')
+                            };
+                        }
+                        return { ok: false, reason: 'Device or other IDs checkbox input not found' };
+                    }, { answerText: DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT });
+                };
+
+                await retryAction(async () => {
+                    let target = await findDeviceIdsCheckboxTarget();
+                    if (!target || !target.ok) {
+                        throw new Error(`Device or other IDs checkbox not selected: ${(target && target.reason) || 'unknown reason'}`);
+                    }
+
+                    if (!target.modelSelected) {
+                        console.log(
+                            `[DATA SAFETY] Clicking Device or other IDs checkbox at ` +
+                            `${Math.round(target.x)},${Math.round(target.y)} ` +
+                            `(visual=${target.visualSelected}, checked=${target.inputChecked}, aria=${target.ariaChecked || 'none'}).`
+                        );
+                        await page.mouse.click(target.x, target.y);
+                        await delay(page, 1000);
+                    }
+
+                    target = await findDeviceIdsCheckboxTarget();
+                    if (!target || !target.ok || (!target.modelSelected && !target.visualSelected)) {
+                        throw new Error(`Device or other IDs checkbox not selected: ${(target && target.reason) || 'unknown reason'}`);
+                    }
+
+                    if (!(await waitForDataSafetyNextEnabled(DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS))) {
+                        console.log('[DATA SAFETY] Device or other IDs selected but Next is still disabled; syncing checkbox state...');
+                        target = await findDeviceIdsCheckboxTarget();
+                        if (!target || !target.ok) {
+                            throw new Error(`Device or other IDs checkbox not found for sync: ${(target && target.reason) || 'unknown reason'}`);
+                        }
+                        if (!target.modelSelected) {
+                            await page.mouse.click(target.x, target.y);
+                        } else {
+                            const syncResult = await dispatchDeviceIdsCheckboxEvents();
+                            if (!syncResult || !syncResult.ok) {
+                                throw new Error(`Device or other IDs sync failed: ${(syncResult && syncResult.reason) || 'unknown reason'}`);
+                            }
+                        }
+                        await delay(page, 1000);
+                        if (!(await waitForDataSafetyNextEnabled(DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS))) {
+                            const beforeToggle = await findDeviceIdsCheckboxTarget();
+                            if (beforeToggle && beforeToggle.ok) {
+                                console.log('[DATA SAFETY] Device or other IDs Next is still disabled; toggling checkbox off/on once.');
+                                await page.mouse.click(beforeToggle.x, beforeToggle.y);
+                                await delay(page, 500);
+                                const toggleBack = await findDeviceIdsCheckboxTarget();
+                                if (toggleBack && toggleBack.ok) {
+                                    await page.mouse.click(toggleBack.x, toggleBack.y);
+                                    await delay(page, 1000);
                                 }
                             }
-                            const selected = Boolean(
-                                (input && input.checked) ||
-                                (input && input.getAttribute('aria-checked') === 'true') ||
-                                root.getAttribute('aria-checked') === 'true' ||
-                                root.querySelector('input[type="checkbox"]:checked, .mdc-checkbox--selected, [aria-checked="true"]')
-                            );
-                            return { ok: selected, optionText };
                         }
-                        return { ok: false, reason: 'Device or other IDs checkbox not found' };
-                    }, {
-                        answer: regexPayload(action.answer)
-                    });
-
-                    if (!result || !result.ok) {
-                        throw new Error(`Device or other IDs checkbox not selected: ${(result && result.reason) || 'unknown reason'}`);
+                        if (!(await waitForDataSafetyNextEnabled(DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS))) {
+                            const afterSync = await findDeviceIdsCheckboxTarget();
+                            throw new Error(
+                                'Data safety Next button still disabled after Device or other IDs sync ' +
+                                `(visual=${afterSync && afterSync.visualSelected}, ` +
+                                `checked=${afterSync && afterSync.inputChecked}, ` +
+                                `aria=${(afterSync && afterSync.ariaChecked) || 'none'}).`
+                            );
+                        }
                     }
                 }, 'Select Device or other IDs data type', 4);
                 console.log('[DATA SAFETY] Device or other IDs data type selected.');
