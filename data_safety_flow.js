@@ -39,6 +39,13 @@ const DATA_SAFETY_DATA_TYPES_ACTIONS = [
     }
 ];
 
+const DATA_SAFETY_NEXT_BUTTON_SELECTORS = [
+    'button[debug-id="button-next"]',
+    'button[debug-id="next-button"]',
+    'button[debug-id="main-button"]:has-text("Next")',
+    'button:has-text("Next")'
+];
+
 const DATA_SAFETY_USAGE_ACTIONS = [
     {
         label: 'Device or other IDs questions',
@@ -103,6 +110,7 @@ const DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT = 'No';
 module.exports = {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
     DATA_SAFETY_SECTION_SELECTORS,

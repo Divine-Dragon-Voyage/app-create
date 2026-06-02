@@ -8,6 +8,7 @@ const { chromium } = require('playwright');
 const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_SECTION_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
@@ -3633,10 +3634,26 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 .filter({ hasText: /^\s*Save\s*$/ })
                 .last();
 
+            const getDataSafetyNextButton = () => page
+                .locator(DATA_SAFETY_NEXT_BUTTON_SELECTORS.join(', '))
+                .filter({ hasText: /^\s*Next\s*$/ })
+                .last();
+
             const clickMainSaveButton = async (label) => {
                 const saveButton = getMainSaveButton();
                 await saveButton.waitFor({ state: 'visible', timeout: 15000 });
                 await clickLocatorRobust(saveButton, `Data safety ${label}`, 15000);
+                console.log(`[DATA SAFETY] Clicked ${label}.`);
+                await delay(page, 3000);
+            };
+
+            const clickDataSafetyNextButton = async (label = 'Next') => {
+                const nextButton = getDataSafetyNextButton();
+                await nextButton.waitFor({ state: 'visible', timeout: 15000 });
+                if (!(await waitForEnabled(nextButton, 15000)) || await isLocatorDisabled(nextButton)) {
+                    throw new Error('Data safety Next button is disabled.');
+                }
+                await clickLocatorRobust(nextButton, `Data safety ${label}`, 15000);
                 console.log(`[DATA SAFETY] Clicked ${label}.`);
                 await delay(page, 3000);
             };
@@ -4535,9 +4552,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             };
 
             for (let i = 0; i < 30; i++) {
-                const nextBtn = page.locator(
-                    'button[debug-id="next-button"], button:has-text("Next"), [debug-id="main-button"]:has-text("Next"), button[debug-id="button-next"]'
-                ).first();
+                const nextBtn = getDataSafetyNextButton();
                 const saveBtn = getMainSaveButton();
 
                 if (await isDataCollectionSecurityStepVisible()) {
@@ -4545,6 +4560,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }
                 if (await isDataTypesStepVisible()) {
                     await selectDataSafetyDeviceIdsType();
+                    await retryAction(async () => {
+                        await clickDataSafetyNextButton('Next');
+                    }, 'Click Data safety Next after Device or other IDs selection', 3);
+                    continue;
                 }
                 if (await isDataUsageStepVisible()) {
                     await answerDataSafetyDeviceIdsUsage();

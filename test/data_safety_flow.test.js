@@ -5,6 +5,7 @@ const {
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+    DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX,
     DATA_SAFETY_SECTION_SELECTORS,
@@ -67,6 +68,12 @@ test('data types selects only device or other ids', () => {
             }
         ]
     );
+});
+
+test('data safety next button prefers stable bottom action selectors', () => {
+    assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="button-next"]'));
+    assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="next-button"]'));
+    assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="main-button"]:has-text("Next")'));
 });
 
 test('device or other ids usage answers collected ephemeral required app functionality then save', () => {
