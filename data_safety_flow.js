@@ -50,13 +50,12 @@ const DATA_SAFETY_NEXT_BUTTON_SELECTORS = [
     'button:has-text("Next")'
 ];
 
-function pickLastEnabledDataSafetyNextButton(candidates) {
+function pickLastVisibleDataSafetyNextButton(candidates) {
     for (let i = candidates.length - 1; i >= 0; i--) {
         const candidate = candidates[i] || {};
         const text = String(candidate.text || '').replace(/\s+/g, ' ').trim();
         if (text !== 'Next') continue;
         if (!candidate.visible) continue;
-        if (candidate.disabled) continue;
         return i;
     }
     return -1;
@@ -139,5 +138,5 @@ module.exports = {
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
     DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
-    pickLastEnabledDataSafetyNextButton
+    pickLastVisibleDataSafetyNextButton
 };

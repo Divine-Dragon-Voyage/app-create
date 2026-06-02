@@ -20,7 +20,7 @@ const {
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
     DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
-    pickLastEnabledDataSafetyNextButton
+    pickLastVisibleDataSafetyNextButton
 } = require('./data_safety_flow');
 const {
     buildTempDownloadRoot,
@@ -3641,8 +3641,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 const primary = page.locator(DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR)
                     .filter({ hasText: /^\s*Next\s*$/ })
                     .last();
-                if (await primary.isVisible().catch(() => false) &&
-                    !(await isLocatorDisabled(primary))) {
+                if (await primary.isVisible().catch(() => false)) {
                     return primary;
                 }
 
@@ -3666,7 +3665,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     }).catch(() => ({ text: '', visible: false, disabled: true }));
                     states.push(state);
                 }
-                const selectedIndex = pickLastEnabledDataSafetyNextButton(states);
+                const selectedIndex = pickLastVisibleDataSafetyNextButton(states);
                 if (selectedIndex < 0) {
                     return null;
                 }
@@ -4594,6 +4593,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
                 if (await isDataCollectionSecurityStepVisible()) {
                     await answerDataCollectionSecurityStep();
+                    await retryAction(async () => {
+                        await clickDataSafetyNextButton('Next');
+                    }, 'Click Data safety Next after collection/security answers', 3);
+                    continue;
                 }
                 if (await isDataTypesStepVisible()) {
                     await selectDataSafetyDeviceIdsType();

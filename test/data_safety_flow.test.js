@@ -16,7 +16,7 @@ const {
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
     DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
-    pickLastEnabledDataSafetyNextButton
+    pickLastVisibleDataSafetyNextButton
 } = require('../data_safety_flow');
 
 test('data collection and security answers yes yes no-account no no', () => {
@@ -81,17 +81,17 @@ test('data safety next button prefers stable bottom action selectors', () => {
     assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="main-button"]:has-text("Next")'));
 });
 
-test('data safety next picker skips stale hidden or disabled candidates', () => {
+test('data safety next picker skips stale hidden candidates but keeps disabled visible next', () => {
     assert.equal(
-        pickLastEnabledDataSafetyNextButton([
+        pickLastVisibleDataSafetyNextButton([
             { text: 'Next', visible: true, disabled: false },
             { text: 'Next', visible: false, disabled: false },
             { text: 'Next', visible: true, disabled: true }
         ]),
-        0
+        2
     );
     assert.equal(
-        pickLastEnabledDataSafetyNextButton([
+        pickLastVisibleDataSafetyNextButton([
             { text: 'Next', visible: true, disabled: true },
             { text: 'Save', visible: true, disabled: false },
             { text: 'Next', visible: true, disabled: false }
