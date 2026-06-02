@@ -2,9 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
+    DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
+    DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
     DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX,
@@ -13,10 +15,12 @@ const {
     DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX,
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
-    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
+    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
+    pickLastEnabledDataSafetyNextButton
 } = require('../data_safety_flow');
 
 test('data collection and security answers yes yes no-account no no', () => {
+    assert.equal(DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR, 'material-radio-group[debug-id="personal-data-yes"]');
     assert.deepEqual(
         DATA_SAFETY_COLLECTION_SECURITY_ACTIONS.map(action => ({
             type: action.type,
@@ -71,9 +75,29 @@ test('data types selects only device or other ids', () => {
 });
 
 test('data safety next button prefers stable bottom action selectors', () => {
+    assert.equal(DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR, 'button[debug-id="button-next"]');
     assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="button-next"]'));
     assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="next-button"]'));
     assert.ok(DATA_SAFETY_NEXT_BUTTON_SELECTORS.includes('button[debug-id="main-button"]:has-text("Next")'));
+});
+
+test('data safety next picker skips stale hidden or disabled candidates', () => {
+    assert.equal(
+        pickLastEnabledDataSafetyNextButton([
+            { text: 'Next', visible: true, disabled: false },
+            { text: 'Next', visible: false, disabled: false },
+            { text: 'Next', visible: true, disabled: true }
+        ]),
+        0
+    );
+    assert.equal(
+        pickLastEnabledDataSafetyNextButton([
+            { text: 'Next', visible: true, disabled: true },
+            { text: 'Save', visible: true, disabled: false },
+            { text: 'Next', visible: true, disabled: false }
+        ]),
+        2
+    );
 });
 
 test('device or other ids usage answers collected ephemeral required app functionality then save', () => {

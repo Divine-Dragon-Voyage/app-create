@@ -7,7 +7,9 @@ const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
+    DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
     DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_SECTION_SELECTORS,
@@ -17,7 +19,8 @@ const {
     DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX,
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
-    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
+    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
+    pickLastEnabledDataSafetyNextButton
 } = require('./data_safety_flow');
 const {
     buildTempDownloadRoot,
@@ -3634,10 +3637,41 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 .filter({ hasText: /^\s*Save\s*$/ })
                 .last();
 
-            const getDataSafetyNextButton = () => page
-                .locator(DATA_SAFETY_NEXT_BUTTON_SELECTORS.join(', '))
-                .filter({ hasText: /^\s*Next\s*$/ })
-                .last();
+            const getDataSafetyNextButton = async () => {
+                const primary = page.locator(DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR)
+                    .filter({ hasText: /^\s*Next\s*$/ })
+                    .last();
+                if (await primary.isVisible().catch(() => false) &&
+                    !(await isLocatorDisabled(primary))) {
+                    return primary;
+                }
+
+                const candidates = page.locator(DATA_SAFETY_NEXT_BUTTON_SELECTORS.join(', '));
+                const count = await candidates.count().catch(() => 0);
+                const states = [];
+                for (let index = 0; index < count; index++) {
+                    const candidate = candidates.nth(index);
+                    const state = await candidate.evaluate((el) => {
+                        const text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        const visible = style.display !== 'none' &&
+                            style.visibility !== 'hidden' &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                        const disabled = el.hasAttribute('disabled') ||
+                            el.classList.contains('mdc-button--disabled') ||
+                            el.getAttribute('aria-disabled') === 'true';
+                        return { text, visible, disabled };
+                    }).catch(() => ({ text: '', visible: false, disabled: true }));
+                    states.push(state);
+                }
+                const selectedIndex = pickLastEnabledDataSafetyNextButton(states);
+                if (selectedIndex < 0) {
+                    return null;
+                }
+                return candidates.nth(selectedIndex);
+            };
 
             const clickMainSaveButton = async (label) => {
                 const saveButton = getMainSaveButton();
@@ -3648,7 +3682,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             };
 
             const clickDataSafetyNextButton = async (label = 'Next') => {
-                const nextButton = getDataSafetyNextButton();
+                const nextButton = await getDataSafetyNextButton();
+                if (!nextButton) {
+                    throw new Error('Data safety Next button not found.');
+                }
                 await nextButton.waitFor({ state: 'visible', timeout: 15000 });
                 if (!(await waitForEnabled(nextButton, 15000)) || await isLocatorDisabled(nextButton)) {
                     throw new Error('Data safety Next button is disabled.');
@@ -3664,9 +3701,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             });
 
             const isDataCollectionSecurityStepVisible = async () => {
-                return await page.locator(
-                    'text=/Does your app collect or share any of the required user data types\\?/i'
-                ).first().isVisible().catch(() => false);
+                return await page.locator(DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR).first()
+                    .isVisible()
+                    .catch(() => false);
             };
 
             const isDataTypesStepVisible = async () => {
@@ -4552,7 +4589,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             };
 
             for (let i = 0; i < 30; i++) {
-                const nextBtn = getDataSafetyNextButton();
+                const nextBtn = await getDataSafetyNextButton();
                 const saveBtn = getMainSaveButton();
 
                 if (await isDataCollectionSecurityStepVisible()) {
@@ -4582,7 +4619,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }
 
                 // Follow document flow: answer current step, Next through pages, Save at end.
-                if (await isButtonEnabled(nextBtn)) {
+                if (nextBtn && await isButtonEnabled(nextBtn)) {
                     await clickScopedButton(nextBtn, 'Next');
                     continue;
                 }

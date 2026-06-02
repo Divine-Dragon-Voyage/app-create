@@ -30,6 +30,8 @@ const DATA_SAFETY_COLLECTION_SECURITY_ACTIONS = [
     }
 ];
 
+const DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR = 'material-radio-group[debug-id="personal-data-yes"]';
+
 const DATA_SAFETY_DATA_TYPES_ACTIONS = [
     {
         label: 'Device or other IDs data type',
@@ -39,12 +41,26 @@ const DATA_SAFETY_DATA_TYPES_ACTIONS = [
     }
 ];
 
+const DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR = 'button[debug-id="button-next"]';
+
 const DATA_SAFETY_NEXT_BUTTON_SELECTORS = [
-    'button[debug-id="button-next"]',
+    DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
     'button[debug-id="next-button"]',
     'button[debug-id="main-button"]:has-text("Next")',
     'button:has-text("Next")'
 ];
+
+function pickLastEnabledDataSafetyNextButton(candidates) {
+    for (let i = candidates.length - 1; i >= 0; i--) {
+        const candidate = candidates[i] || {};
+        const text = String(candidate.text || '').replace(/\s+/g, ' ').trim();
+        if (text !== 'Next') continue;
+        if (!candidate.visible) continue;
+        if (candidate.disabled) continue;
+        return i;
+    }
+    return -1;
+}
 
 const DATA_SAFETY_USAGE_ACTIONS = [
     {
@@ -109,7 +125,9 @@ const DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT = 'No';
 
 module.exports = {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
+    DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
     DATA_SAFETY_NEXT_BUTTON_SELECTORS,
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
@@ -120,5 +138,6 @@ module.exports = {
     DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX,
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
-    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
+    DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
+    pickLastEnabledDataSafetyNextButton
 };
