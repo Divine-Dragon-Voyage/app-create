@@ -4206,11 +4206,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                 .filter({ hasText: /^No$/i })
                                 .first();
                             const noRadio = noLabel.locator('xpath=ancestor::material-radio[1]').first();
-                            await retryAction(async () => {
-                                await group.waitFor({ state: 'visible', timeout: 10000 });
-                                await noLabel.waitFor({ state: 'visible', timeout: 10000 });
-                                await clickLocatorRobust(noLabel, 'Data deletion request = No label', 10000);
-                                const selected = await noRadio.evaluate((radioRoot) => {
+                            const noMdcRadio = noRadio.locator('.mdc-radio').first();
+                            const noInput = noRadio.locator('input[type="radio"]').first();
+                            const isNoSelected = async () => {
+                                return await noRadio.evaluate((radioRoot) => {
                                     const input = radioRoot.querySelector('input[type="radio"]');
                                     return Boolean(
                                         (input && input.checked) ||
@@ -4219,9 +4218,42 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                         radioRoot.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
                                     );
                                 }).catch(() => false);
+                            };
+                            const tryClickNo = async (locator, clickLabel) => {
+                                await clickLocatorRobust(locator, clickLabel, 10000);
+                                await delay(page, 700);
+                                return await isNoSelected();
+                            };
+                            await retryAction(async () => {
+                                await group.waitFor({ state: 'visible', timeout: 10000 });
+                                await noLabel.waitFor({ state: 'visible', timeout: 10000 });
+                                if (await tryClickNo(noLabel, 'Data deletion request = No label')) return;
+                                if (await tryClickNo(noMdcRadio, 'Data deletion request = No radio control')) return;
+                                if (await tryClickNo(noInput, 'Data deletion request = No input')) return;
 
-                                if (!selected) {
-                                    await clickLocatorRobust(noRadio, 'Data deletion request = No radio', 10000);
+                                await noRadio.evaluate((radioRoot) => {
+                                    const input = radioRoot.querySelector('input[type="radio"]');
+                                    const mdcRadio = radioRoot.querySelector('.mdc-radio');
+                                    const label = input && input.id
+                                        ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`)
+                                        : null;
+                                    const targets = [label, mdcRadio, input, radioRoot].filter(Boolean);
+                                    for (const target of targets) {
+                                        target.scrollIntoView({ block: 'center', inline: 'nearest' });
+                                        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                                        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                                        target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                                    }
+                                    if (input) {
+                                        input.checked = true;
+                                        input.setAttribute('aria-checked', 'true');
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    }
+                                });
+                                await delay(page, 700);
+                                if (!await isNoSelected()) {
+                                    throw new Error('Data deletion request = No not selected after fallback clicks');
                                 }
                             }, `Data safety ${action.label}`, 4);
                         } else {
