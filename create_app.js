@@ -12,8 +12,10 @@ const {
     DATA_SAFETY_SECTION_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
     DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX,
     DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX,
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
     DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
 } = require('./data_safety_flow');
 const {
@@ -3922,97 +3924,136 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
             const clickDataSafetyRadioGroupAnswer = async (groupSelectors, answerRegex, label) => {
                 await retryAction(async () => {
-                    let group = null;
-                    for (const selector of groupSelectors) {
-                        const candidate = page.locator(selector).first();
-                        if (await candidate.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
-                            group = candidate;
-                            break;
-                        }
-                    }
-                    if (!group) {
-                        throw new Error(`${label} question group not found`);
-                    }
-
-                    const result = await group.evaluate((scope, { answer }) => {
-                        const answerPattern = new RegExp(answer.source, answer.flags);
+                    const target = await page.evaluate((config) => {
+                        const answerPattern = new RegExp(config.answer.source, config.answer.flags);
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-                        const isVisible = (el) => {
+                        const visibleRect = (el) => {
                             if (!el || !(el instanceof HTMLElement)) return false;
                             const style = window.getComputedStyle(el);
                             const rect = el.getBoundingClientRect();
-                            return style.display !== 'none' &&
+                            if (style.display !== 'none' &&
                                 style.visibility !== 'hidden' &&
                                 rect.width > 0 &&
-                                rect.height > 0;
-                        };
-                        const getInputLabelText = (input) => {
-                            const labelledBy = String(input.getAttribute('aria-labelledby') || '').trim();
-                            if (labelledBy) {
-                                const text = labelledBy
-                                    .split(/\s+/)
-                                    .map(id => document.getElementById(id))
-                                    .filter(Boolean)
-                                    .map(el => normalize(el.textContent))
-                                    .filter(Boolean)
-                                    .join(' ');
-                                if (text) return text;
+                                rect.height > 0) {
+                                return rect;
                             }
-                            if (input.id) {
-                                const labelEl = Array.from(document.querySelectorAll('label'))
-                                    .find(candidate => candidate.htmlFor === input.id);
-                                if (labelEl) return normalize(labelEl.textContent);
-                            }
-                            return '';
+                            return null;
                         };
-
-                        const optionRoots = Array.from(scope.querySelectorAll(
-                            'material-radio, label, .mdc-form-field, [role="radio"], .mdc-radio'
-                        )).filter(isVisible);
-
-                        for (const optionRoot of optionRoots) {
-                            const input = optionRoot.matches('input[type="radio"]')
-                                ? optionRoot
-                                : optionRoot.querySelector('input[type="radio"]');
-                            const optionText = [
-                                normalize(optionRoot.textContent),
-                                input ? getInputLabelText(input) : ''
-                            ].filter(Boolean).join(' ');
-                            if (!answerPattern.test(optionText)) continue;
-
-                            const checked = Boolean(
+                        const isSelected = (radio) => {
+                            const input = radio.querySelector('input[type="radio"]');
+                            return Boolean(
                                 (input && input.checked) ||
                                 (input && input.getAttribute('aria-checked') === 'true') ||
-                                optionRoot.getAttribute('aria-checked') === 'true' ||
-                                optionRoot.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
+                                radio.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
                             );
-                            optionRoot.scrollIntoView({ block: 'center', inline: 'nearest' });
-                            if (!checked) {
-                                optionRoot.click();
-                                if (input && !input.checked && input.getAttribute('aria-checked') !== 'true') {
-                                    input.click();
-                                }
-                                if (input) {
-                                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                            }
-                            const selected = Boolean(
-                                (input && input.checked) ||
-                                (input && input.getAttribute('aria-checked') === 'true') ||
-                                optionRoot.getAttribute('aria-checked') === 'true' ||
-                                optionRoot.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
-                            );
-                            return { ok: selected, optionText };
+                        };
+                        const groups = config.groupSelectors
+                            .map(selector => document.querySelector(selector))
+                            .filter(Boolean);
+                        const group = groups.find((candidate) => {
+                            if (visibleRect(candidate)) return true;
+                            return Array.from(candidate.querySelectorAll(`${config.radioSelector} .mdc-radio, ${config.radioSelector} label`))
+                                .some(visibleRect);
+                        });
+                        if (!group) {
+                            return { ok: false, reason: `${config.label} group not visible` };
                         }
-
-                        return { ok: false, reason: 'answer option not found' };
+                        const directRadios = Array.from(group.children)
+                            .filter(child => child.matches && child.matches(config.radioSelector));
+                        const options = directRadios.map(radio => normalize(radio.querySelector('label') && radio.querySelector('label').textContent));
+                        const targetRadio = directRadios.find((radio) => {
+                            const optionText = normalize(radio.querySelector('label') && radio.querySelector('label').textContent);
+                            return answerPattern.test(optionText);
+                        }) || directRadios[config.fallbackIndex];
+                        if (!targetRadio) {
+                            return {
+                                ok: false,
+                                reason: `${config.label} target radio not found; direct radio count=${directRadios.length}; options=${options.join(' | ')}`
+                            };
+                        }
+                        const input = targetRadio.querySelector('input[type="radio"]');
+                        const labelEl = targetRadio.querySelector('label');
+                        const mdcRadio = targetRadio.querySelector('.mdc-radio');
+                        const optionText = normalize(labelEl && labelEl.textContent);
+                        const clickTarget = mdcRadio || labelEl || input || targetRadio;
+                        clickTarget.scrollIntoView({ block: 'center', inline: 'nearest' });
+                        const rect = visibleRect(clickTarget) || visibleRect(labelEl) || visibleRect(mdcRadio) || visibleRect(input);
+                        if (!rect) {
+                            return {
+                                ok: false,
+                                reason: `${config.label} target has no visible click rect; option=${optionText}; options=${options.join(' | ')}`
+                            };
+                        }
+                        return {
+                            ok: true,
+                            alreadySelected: isSelected(targetRadio),
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2,
+                            optionText,
+                            options,
+                            directRadioCount: directRadios.length
+                        };
                     }, {
-                        answer: regexPayload(answerRegex)
+                        groupSelectors,
+                        radioSelector: DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
+                        answer: regexPayload(answerRegex),
+                        fallbackIndex: DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX,
+                        label
                     });
 
-                    if (!result || !result.ok) {
-                        throw new Error(`${label} not selected: ${(result && result.reason) || 'unknown reason'}`);
+                    if (!target || !target.ok || target.optionText !== DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT) {
+                        const reason = target && target.reason
+                            ? target.reason
+                            : `target=${target && target.optionText}, directRadioCount=${target && target.directRadioCount}, options=${target && target.options}`;
+                        throw new Error(`${label} target not found: ${reason}`);
+                    }
+
+                    if (target.alreadySelected) {
+                        console.log(`[DATA SAFETY] ${label} already selected (${target.optionText}).`);
+                    } else {
+                        console.log(`[DATA SAFETY] ${label} options: ${(target.options || []).join(' | ')}; clicking "${target.optionText}" at ${Math.round(target.x)},${Math.round(target.y)}.`);
+                        await page.mouse.click(target.x, target.y);
+                        await delay(page, 1000);
+                    }
+
+                    const selected = await page.evaluate((config) => {
+                        const answerPattern = new RegExp(config.answer.source, config.answer.flags);
+                        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                        const group = config.groupSelectors
+                            .map(selector => document.querySelector(selector))
+                            .find(Boolean);
+                        if (!group) return { ok: false, reason: `${config.label} group not found after click` };
+                        const directRadios = Array.from(group.children)
+                            .filter(child => child.matches && child.matches(config.radioSelector));
+                        const targetRadio = directRadios.find((radio) => {
+                            const optionText = normalize(radio.querySelector('label') && radio.querySelector('label').textContent);
+                            return answerPattern.test(optionText);
+                        }) || directRadios[config.fallbackIndex];
+                        if (!targetRadio) return { ok: false, reason: `${config.label} target radio not found after click` };
+                        const input = targetRadio.querySelector('input[type="radio"]');
+                        const optionText = normalize(targetRadio.querySelector('label') && targetRadio.querySelector('label').textContent);
+                        return {
+                            ok: Boolean(
+                                (input && input.checked) ||
+                                (input && input.getAttribute('aria-checked') === 'true') ||
+                                targetRadio.querySelector('.mdc-radio--checked, input[type="radio"]:checked, [aria-checked="true"]')
+                            ),
+                            optionText,
+                            ariaChecked: input && input.getAttribute('aria-checked'),
+                            checked: input && input.checked
+                        };
+                    }, {
+                        groupSelectors,
+                        radioSelector: DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
+                        answer: regexPayload(answerRegex),
+                        fallbackIndex: DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX,
+                        label
+                    });
+                    if (!selected || !selected.ok || selected.optionText !== DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT) {
+                        const reason = selected && selected.reason
+                            ? selected.reason
+                            : `target=${selected && selected.optionText}, checked=${selected && selected.checked}, ariaChecked=${selected && selected.ariaChecked}`;
+                        throw new Error(`${label} not selected after mouse click: ${reason}`);
                     }
                 }, `Data safety ${label}`, 4);
                 console.log(`[DATA SAFETY] Selected ${label}.`);

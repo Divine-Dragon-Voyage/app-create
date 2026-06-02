@@ -6,10 +6,12 @@ const {
     DATA_SAFETY_USAGE_ACTIONS,
     DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX,
     DATA_SAFETY_SECTION_SELECTORS,
     DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS,
     DATA_SAFETY_DATA_DELETION_NO_RADIO_INDEX,
     DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR,
+    DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT,
     DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT
 } = require('../data_safety_flow');
 
@@ -88,6 +90,17 @@ test('data collection account creation controls use stable debug selectors', () 
     assert.ok(DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS.includes('material-checkbox[debug-id="acm-checkboxes"]'));
     assert.ok(DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS.includes('material-radio-group[debug-id="has-outside-app-accounts"]'));
     assert.ok(DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS.includes('[role="radiogroup"][aria-label*="created outside of the app"]'));
+});
+
+test('outside app login answer uses direct no radio under stable group', () => {
+    const outsideLoginAction = DATA_SAFETY_COLLECTION_SECURITY_ACTIONS.find(action => action.label === 'outside app login = No');
+    assert.ok(outsideLoginAction);
+    assert.equal(outsideLoginAction.type, 'radio');
+    assert.match('Can users log in to your app with accounts created outside of the app?', outsideLoginAction.question);
+    assert.match('No', outsideLoginAction.answer);
+    assert.equal(DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_RADIO_INDEX, 1);
+    assert.equal(DATA_SAFETY_DIRECT_MATERIAL_RADIO_SELECTOR, 'material-radio');
+    assert.equal(DATA_SAFETY_OUTSIDE_APP_LOGIN_NO_ANSWER_TEXT, 'No');
 });
 
 test('data deletion request controls use stable debug selectors', () => {
