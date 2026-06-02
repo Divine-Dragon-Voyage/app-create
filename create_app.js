@@ -9,6 +9,7 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_USAGE_ACTIONS,
+    DATA_SAFETY_SECTION_SELECTORS,
     DATA_SAFETY_OUTSIDE_APP_LOGIN_GROUP_SELECTORS,
     DATA_SAFETY_DATA_DELETION_GROUP_SELECTORS
 } = require('./data_safety_flow');
@@ -4198,7 +4199,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                 action.label
                             );
                         } else if (action.label === 'data deletion request = No') {
-                            const group = page
+                            const dataSafetySection = page
+                                .locator(DATA_SAFETY_SECTION_SELECTORS.join(', '))
+                                .first();
+                            const group = dataSafetySection
                                 .locator('material-radio-group[debug-id="data-deletion"]')
                                 .first();
                             const noLabel = group
@@ -4224,9 +4228,22 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                                 await delay(page, 700);
                                 return await isNoSelected();
                             };
+                            const tryCoordinateClickNo = async () => {
+                                await noMdcRadio.waitFor({ state: 'visible', timeout: 10000 });
+                                await noMdcRadio.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+                                const box = await noMdcRadio.boundingBox();
+                                if (!box) {
+                                    throw new Error('Data deletion request = No radio control has no bounding box');
+                                }
+                                await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                                await delay(page, 700);
+                                return await isNoSelected();
+                            };
                             await retryAction(async () => {
+                                await dataSafetySection.waitFor({ state: 'visible', timeout: 10000 });
                                 await group.waitFor({ state: 'visible', timeout: 10000 });
                                 await noLabel.waitFor({ state: 'visible', timeout: 10000 });
+                                if (await tryCoordinateClickNo()) return;
                                 if (await tryClickNo(noLabel, 'Data deletion request = No label')) return;
                                 if (await tryClickNo(noMdcRadio, 'Data deletion request = No radio control')) return;
                                 if (await tryClickNo(noInput, 'Data deletion request = No input')) return;
