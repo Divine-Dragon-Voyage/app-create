@@ -35,6 +35,16 @@ const {
     OVERFLOW_MORE_OPTIONS_SELECTORS,
     OVERFLOW_SAVE_MENU_SELECTORS
 } = require('./overflow_save_flow');
+const {
+    APP_SIGNING_MANAGE_BUTTON_SELECTORS,
+    APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
+    APPGENIE_REVIEW_SHA1_INPUT_SELECTOR,
+    APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS,
+    PLAY_PROTECTED_WITH_PLAY_PATH,
+    PLAY_RELEASES_OVERVIEW_PATH,
+    buildReviewScreenshotPath,
+    extractSha1Fingerprint
+} = require('./review_submission_flow');
 
 // Default delay (ms). Increase if VPS is slow.
 const DELAY = 3000;
@@ -86,6 +96,7 @@ const PROGRESS_STEP_SAFETY_DONE = 'SAFETY_DONE';
 const PROGRESS_STEP_STORE_SETTINGS_DONE = 'STORE_SETTINGS_DONE';
 const PROGRESS_STEP_STORE_LISTING_DONE = 'STORE_LISTING_DONE';
 const PROGRESS_STEP_RELEASE_DONE = 'RELEASE_DONE';
+const PROGRESS_STEP_REVIEW_UPLOAD_DONE = 'REVIEW_UPLOAD_DONE';
 const PROGRESS_STEP_DONE = 'DONE';
 const PROGRESS_STEP_ORDER = [
     PROGRESS_STEP_APP_CREATED,
@@ -103,6 +114,7 @@ const PROGRESS_STEP_ORDER = [
     PROGRESS_STEP_STORE_SETTINGS_DONE,
     PROGRESS_STEP_STORE_LISTING_DONE,
     PROGRESS_STEP_RELEASE_DONE,
+    PROGRESS_STEP_REVIEW_UPLOAD_DONE,
     PROGRESS_STEP_DONE
 ];
 const PROGRESS_STEP_SET = new Set(PROGRESS_STEP_ORDER);
@@ -2720,10 +2732,298 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     return;
                 }
 
-                const input = targetPage.locator('input[type="file"]').last();
+                const inputCandidates = [
+                    uploadButton.locator('xpath=ancestor::*[contains(@class, "upload") or contains(@class, "file")][1]//input[@type="file"]').first(),
+                    targetPage.locator('button.upload-button input[type="file"], .upload-button input[type="file"]').first(),
+                    targetPage.locator('input[type="file"][accept*=".aab"], input[type="file"][accept*="application"]').last(),
+                    targetPage.locator('input[type="file"]').last()
+                ];
+                let input = null;
+                for (const candidate of inputCandidates) {
+                    if (await candidate.count().catch(() => 0)) {
+                        input = candidate;
+                        break;
+                    }
+                }
+                if (!input) {
+                    throw new Error(`${label} file input not found after Upload click.`);
+                }
                 await input.setInputFiles(files, { timeout: 30000 });
             }, `Upload ${label}`, 3);
             await delay(targetPage, 3000);
+        }
+
+        async function clickFirstVisibleSelectorOn(targetPage, selectors, label, waitMs = 3000) {
+            await retryAction(async () => {
+                let target = null;
+                for (const selector of selectors) {
+                    const candidate = targetPage.locator(selector).first();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        target = candidate;
+                        break;
+                    }
+                }
+                if (!target) {
+                    throw new Error(`${label} not found.`);
+                }
+                await clickLocatorRobust(target, label, 15000);
+                await delay(targetPage, waitMs);
+            }, `Click ${label}`, 3);
+        }
+
+        async function readAppSigningSha1Fingerprint() {
+            console.log('[REVIEW_UPLOAD] Opening Protected with Play...');
+            await gotoAppSubPage(PLAY_PROTECTED_WITH_PLAY_PATH, 'Protected with Play', 5000);
+
+            const appSigningRow = page.locator('.feature-row, .pc-card, div').filter({
+                hasText: /Protect app signing key/i
+            }).first();
+            const manageButtonInRow = appSigningRow.locator(
+                'button[aria-label="Manage Play app signing"], button[debug-id="cta-button"], button:has-text("Manage Play app signing")'
+            ).first();
+            await retryAction(async () => {
+                if (await manageButtonInRow.isVisible().catch(() => false)) {
+                    await clickLocatorRobust(manageButtonInRow, 'Manage Play app signing button', 15000);
+                    return;
+                }
+                await clickFirstVisibleSelectorOn(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS, 'Manage Play app signing button', 1000);
+            }, 'Open Play app signing', 3);
+
+            await page.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+            await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+            await delay(page, 5000);
+
+            console.log('[REVIEW_UPLOAD] Reading SHA-1 certificate fingerprint...');
+            let sha1 = '';
+            await retryAction(async () => {
+                const candidateText = await page.evaluate(() => {
+                    const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+                    const labels = Array.from(document.querySelectorAll('body *'))
+                        .filter(el => /SHA-1\s+certificate\s+fingerprint/i.test(normalize(el.textContent)));
+                    const chunks = [];
+                    for (const labelEl of labels) {
+                        let current = labelEl;
+                        for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
+                            chunks.push(normalize(current.innerText || current.textContent));
+                        }
+                    }
+                    chunks.push(normalize(document.body?.innerText || ''));
+                    return chunks.join('\n');
+                }).catch(() => '');
+                sha1 = extractSha1Fingerprint(candidateText);
+
+                if (!sha1) {
+                    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+                        origin: 'https://play.google.com'
+                    }).catch(() => { });
+                    const sha1Row = page.locator('div, console-form-row, section').filter({
+                        hasText: /SHA-1\s+certificate\s+fingerprint/i
+                    }).last();
+                    const copyButton = sha1Row.locator(
+                        'button, [role="button"], material-icon[role="button"], material-icon[aria-label*="Copy"], material-icon[aria-label*="copy"]'
+                    ).last();
+                    if (await copyButton.isVisible().catch(() => false)) {
+                        await clickLocatorRobust(copyButton, 'SHA-1 copy button', 10000);
+                        await delay(page, 1000);
+                        const clipboardText = await page.evaluate(async () => {
+                            try {
+                                return await navigator.clipboard.readText();
+                            } catch {
+                                return '';
+                            }
+                        }).catch(() => '');
+                        sha1 = extractSha1Fingerprint(clipboardText);
+                    }
+                }
+
+                if (!sha1) {
+                    throw new Error('SHA-1 fingerprint text not found.');
+                }
+            }, 'Read SHA-1 fingerprint from page', 3);
+
+            console.log(`[REVIEW_UPLOAD] SHA-1 fingerprint captured: ${sha1}`);
+            return sha1;
+        }
+
+        async function captureLatestReleasesScreenshot() {
+            console.log('[REVIEW_UPLOAD] Opening Latest releases and bundles for screenshot...');
+            await gotoAppSubPage(PLAY_RELEASES_OVERVIEW_PATH, 'Latest releases and bundles', 5000);
+            const heading = page.locator('text=/Latest releases and bundles/i').first();
+            await heading.waitFor({ state: 'visible', timeout: 90000 });
+            await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => { });
+            await delay(page, 3000);
+
+            const screenshotRoot = path.join(
+                os.tmpdir(),
+                'app-create-downloads',
+                safeFileToken(`${task.appName}-${task.packageName}`),
+                'review-upload'
+            );
+            fs.mkdirSync(screenshotRoot, { recursive: true });
+            const screenshotPath = buildReviewScreenshotPath(screenshotRoot, task.appName);
+            await page.screenshot({ path: screenshotPath, fullPage: true });
+            console.log(`[REVIEW_UPLOAD] Latest releases screenshot saved: ${screenshotPath}`);
+            return screenshotPath;
+        }
+
+        async function ensureAppGenieReviewTaskListPage() {
+            const { page: appGeniePage, source } = await acquireOrCreateAuxPage(
+                context,
+                /appgenie-ai\.com/i,
+                'https://appgenie-ai.com/login',
+                'appgenie'
+            );
+            console.log(`[REVIEW_UPLOAD] AppGenie tab: ${source} | ${appGeniePage.url() || 'about:blank'}`);
+            await appGeniePage.bringToFront().catch(() => { });
+            await delay(appGeniePage, 1000);
+            await ensureAppGenieLoggedIn(appGeniePage, runtimeOptions);
+            if (!/\/my-submit-tasks(?:[/?#]|$)/i.test(String(appGeniePage.url() || ''))) {
+                await appGeniePage.goto('https://appgenie-ai.com/my-submit-tasks', {
+                    timeout: 120000,
+                    waitUntil: 'domcontentloaded'
+                });
+                await appGeniePage.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+                await delay(appGeniePage, 3000);
+            }
+            await ensureAppGenieOnMyTasks(appGeniePage);
+            await randomDelay(appGeniePage, 3000, 5000);
+            await openAppGeniePendingDrawerIfNeeded(appGeniePage);
+            return appGeniePage;
+        }
+
+        async function openAppGeniePendingDrawerIfNeeded(appGeniePage) {
+            const packageVisible = await appGeniePage.locator(`text=${task.packageName}`).first().isVisible().catch(() => false);
+            if (packageVisible) {
+                return;
+            }
+
+            let emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
+            if (!(await emailRow.isVisible().catch(() => false))) {
+                const searchInput = appGeniePage.locator(
+                    'input[placeholder*="搜索邮箱"], input[placeholder*="邮箱"], input[placeholder*="email" i], input.ant-input'
+                ).first();
+                await retryAction(async () => {
+                    await searchInput.waitFor({ state: 'visible', timeout: 30000 });
+                    await searchInput.click({ timeout: 10000 });
+                    await searchInput.fill('');
+                    await searchInput.type(runtimeOptions.contactEmail, { delay: 40 });
+                    await appGeniePage.keyboard.press('Enter').catch(() => { });
+                }, 'Search AppGenie tasks for review upload', 3);
+                await randomDelay(appGeniePage, 5000, 8000);
+                emailRow = appGeniePage.locator('tr.ant-table-row').filter({ hasText: runtimeOptions.contactEmail }).first();
+            }
+
+            await retryAction(async () => {
+                await emailRow.waitFor({ state: 'visible', timeout: 60000 });
+                let openBtn = emailRow.locator('button').filter({ hasText: /查看应用|View\s*app/i }).first();
+                if (!(await openBtn.isVisible().catch(() => false))) {
+                    openBtn = emailRow.locator('button').last();
+                }
+                if (await openBtn.isVisible().catch(() => false)) {
+                    await clickLocatorRobust(openBtn, 'AppGenie View app button for review upload', 10000);
+                } else {
+                    await clickLocatorRobust(emailRow, 'AppGenie task row for review upload', 10000);
+                }
+            }, 'Open AppGenie pending drawer for review upload', 3);
+            await randomDelay(appGeniePage, 3000, 6000);
+        }
+
+        async function findAppGenieReviewCardByPackage(appGeniePage) {
+            const packageText = task.packageName;
+            await retryAction(async () => {
+                const bodyText = await appGeniePage.locator('body').innerText({ timeout: 10000 }).catch(() => '');
+                if (!bodyText.includes(packageText)) {
+                    throw new Error(`Package "${packageText}" not visible in AppGenie task list.`);
+                }
+            }, 'Wait AppGenie package visible', 4);
+
+            const packageTextNode = appGeniePage.locator(`text=${packageText}`).first();
+            const card = packageTextNode.locator(
+                'xpath=ancestor::*[.//button[contains(normalize-space(.), "提交审核")]][1]'
+            );
+            await card.waitFor({ state: 'visible', timeout: 60000 });
+            return card;
+        }
+
+        async function openAppGenieReviewSubmitDialog(appGeniePage) {
+            console.log('[REVIEW_UPLOAD] Opening AppGenie submit review dialog...');
+            const appCard = await findAppGenieReviewCardByPackage(appGeniePage);
+            const submitButton = appCard.locator('button').filter({ hasText: /提交审核/ }).last();
+            await retryAction(async () => {
+                await submitButton.waitFor({ state: 'visible', timeout: 30000 });
+                await clickLocatorRobust(submitButton, 'AppGenie submit review button', 15000);
+            }, 'Click AppGenie submit review button', 3);
+
+            const modal = appGeniePage.locator('.ant-modal').filter({
+                hasText: /提交审核|SHA1|上传/
+            }).last();
+            await modal.waitFor({ state: 'visible', timeout: 60000 });
+            await delay(appGeniePage, 1500);
+            return modal;
+        }
+
+        async function submitAppGenieReviewUpload(screenshotPath, sha1Fingerprint) {
+            const appGeniePage = await ensureAppGenieReviewTaskListPage();
+            const modal = await openAppGenieReviewSubmitDialog(appGeniePage);
+
+            console.log('[REVIEW_UPLOAD] Uploading review screenshot in AppGenie...');
+            await retryAction(async () => {
+                const fileInput = appGeniePage.locator(APPGENIE_REVIEW_FILE_INPUT_SELECTOR).last();
+                await fileInput.waitFor({ state: 'attached', timeout: 30000 });
+                await fileInput.setInputFiles(screenshotPath, { timeout: 30000 });
+            }, 'Upload AppGenie review screenshot', 3);
+            await delay(appGeniePage, 3000);
+
+            console.log('[REVIEW_UPLOAD] Filling SHA-1 in AppGenie...');
+            await retryAction(async () => {
+                let sha1Input = appGeniePage.locator(APPGENIE_REVIEW_SHA1_INPUT_SELECTOR).last();
+                if (!(await sha1Input.count().catch(() => 0))) {
+                    sha1Input = modal.locator('input.ant-input, input[type="text"]').first();
+                }
+                await sha1Input.waitFor({ state: 'visible', timeout: 30000 });
+                await sha1Input.fill('');
+                await sha1Input.type(sha1Fingerprint, { delay: 15 });
+            }, 'Fill AppGenie SHA1 input', 3);
+            await delay(appGeniePage, 1500);
+
+            console.log('[REVIEW_UPLOAD] Submitting AppGenie review upload...');
+            await retryAction(async () => {
+                let submitButton = null;
+                for (const selector of APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS) {
+                    const candidate = appGeniePage.locator(selector).last();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        submitButton = candidate;
+                        break;
+                    }
+                }
+                if (!submitButton) {
+                    throw new Error('AppGenie modal submit button not found.');
+                }
+                if (await isLocatorDisabled(submitButton)) {
+                    throw new Error('AppGenie modal submit button is disabled.');
+                }
+                await clickLocatorRobust(submitButton, 'AppGenie modal submit button', 15000);
+            }, 'Submit AppGenie review upload', 3);
+
+            await retryAction(async () => {
+                const stillVisible = await modal.isVisible().catch(() => false);
+                const successToast = await appGeniePage.locator('.ant-message-notice, .ant-notification-notice, text=/成功|提交成功/i')
+                    .first()
+                    .isVisible()
+                    .catch(() => false);
+                if (stillVisible && !successToast) {
+                    throw new Error('AppGenie review submit confirmation not detected yet.');
+                }
+            }, 'Wait AppGenie review submit confirmation', 4);
+            await delay(appGeniePage, 3000);
+        }
+
+        async function runReviewScreenshotUploadStep() {
+            console.log('Executing post-release step: Review screenshot upload...');
+            const sha1Fingerprint = await readAppSigningSha1Fingerprint();
+            const screenshotPath = await captureLatestReleasesScreenshot();
+            await submitAppGenieReviewUpload(screenshotPath, sha1Fingerprint);
+            markStepDone(PROGRESS_STEP_REVIEW_UPLOAD_DONE);
         }
 
         async function addSelectedStoreAssetsToListing(label) {
@@ -5102,6 +5402,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await runStoreSettingsStep();
             await runStoreListingStep();
             await runReleaseStep();
+            await runReviewScreenshotUploadStep();
 
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
             statusManager.updateTaskStatus(task, STATUS_DONE);
