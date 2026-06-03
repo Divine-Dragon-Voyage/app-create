@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const {
+    APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
+    APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
     APP_SIGNING_MANAGE_BUTTON_SELECTORS,
     APP_SIGNING_SHA1_REGEX,
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
@@ -45,6 +47,8 @@ test('does not extract a SHA-256 prefix as SHA-1', () => {
 test('review submission selectors cover Play and AppGenie controls', () => {
     assert.equal(PLAY_PROTECTED_WITH_PLAY_PATH, '/protect-with-play');
     assert.equal(PLAY_RELEASES_OVERVIEW_PATH, '/releases/overview');
+    assert.ok(APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS.some(selector => selector.includes('play-store-card')));
+    assert.ok(APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS.some(selector => selector.includes('expansion-button')));
     assert.ok(APP_SIGNING_MANAGE_BUTTON_SELECTORS.includes('button[aria-label="Manage Play app signing"]'));
     assert.equal(APP_SIGNING_SHA1_REGEX.source, '(?<![:A-Fa-f0-9])(?:[A-Fa-f0-9]{2}:){19}[A-Fa-f0-9]{2}(?![:A-Fa-f0-9])');
     assert.equal(APPGENIE_REVIEW_FILE_INPUT_SELECTOR, '.ant-modal input[type="file"][accept*="image"]');

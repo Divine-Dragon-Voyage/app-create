@@ -36,6 +36,8 @@ const {
     OVERFLOW_SAVE_MENU_SELECTORS
 } = require('./overflow_save_flow');
 const {
+    APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
+    APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
     APP_SIGNING_MANAGE_BUTTON_SELECTORS,
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
     APPGENIE_REVIEW_SHA1_INPUT_SELECTOR,
@@ -2842,9 +2844,89 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Click ${label}`, 3);
         }
 
+        async function firstVisibleLocatorFromSelectors(targetPage, selectors) {
+            for (const selector of selectors) {
+                const candidate = targetPage.locator(selector).first();
+                if (await candidate.isVisible().catch(() => false)) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        async function ensurePlayStoreProtectionDetailsExpanded() {
+            const manageButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS);
+            if (manageButton) return;
+
+            console.log('[REVIEW_UPLOAD] Expanding Play Store protection details...');
+            await retryAction(async () => {
+                const visibleManage = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS);
+                if (visibleManage) return;
+
+                let expandButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS);
+                if (!expandButton) {
+                    for (const selector of APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS) {
+                        const card = page.locator(selector).filter({ hasText: /Play Store protection/i }).first();
+                        if (await card.isVisible().catch(() => false)) {
+                            expandButton = card.locator('button[debug-id="expansion-button"], button[aria-label="Show details"]').first();
+                            break;
+                        }
+                    }
+                }
+
+                if (!expandButton || !(await expandButton.isVisible().catch(() => false))) {
+                    throw new Error('Play Store protection expand button not found.');
+                }
+
+                const expanded = await expandButton.evaluate(el => el.getAttribute('aria-expanded') === 'true').catch(() => false);
+                if (!expanded) {
+                    await clickLocatorRobust(expandButton, 'Play Store protection expand button', 15000);
+                    await delay(page, 2000);
+                }
+
+                const expandedManageButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS);
+                if (!expandedManageButton) {
+                    throw new Error('Manage Play app signing button not visible after expanding Play Store protection.');
+                }
+            }, 'Expand Play Store protection details', 3);
+        }
+
+        async function fillInputFastWithFallback(targetPage, inputLocator, value, label) {
+            await inputLocator.waitFor({ state: 'visible', timeout: 30000 });
+            await inputLocator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+
+            const verifyValue = async () => {
+                const current = await inputLocator.inputValue({ timeout: 5000 }).catch(() => '');
+                return String(current || '').trim() === String(value || '').trim();
+            };
+
+            await inputLocator.fill(value, { timeout: 10000 }).catch(() => { });
+            await inputLocator.evaluate((el) => {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }).catch(() => { });
+            await delay(targetPage, 500);
+            if (await verifyValue()) return;
+
+            await inputLocator.click({ timeout: 10000 }).catch(() => { });
+            await targetPage.keyboard.press('Control+A').catch(() => { });
+            await targetPage.keyboard.insertText(value).catch(() => { });
+            await delay(targetPage, 500);
+            if (await verifyValue()) return;
+
+            await inputLocator.fill('', { timeout: 10000 }).catch(() => { });
+            await inputLocator.type(value, { delay: 5 });
+            await delay(targetPage, 500);
+            if (!(await verifyValue())) {
+                throw new Error(`${label} was not filled correctly.`);
+            }
+        }
+
         async function readAppSigningSha1Fingerprint() {
             console.log('[REVIEW_UPLOAD] Opening Protected with Play...');
             await gotoAppSubPage(PLAY_PROTECTED_WITH_PLAY_PATH, 'Protected with Play', 5000);
+
+            await ensurePlayStoreProtectionDetailsExpanded();
 
             const appSigningRow = page.locator('.feature-row, .pc-card, div').filter({
                 hasText: /Protect app signing key/i
@@ -3051,9 +3133,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 if (!(await sha1Input.count().catch(() => 0))) {
                     sha1Input = modal.locator('input.ant-input, input[type="text"]').first();
                 }
-                await sha1Input.waitFor({ state: 'visible', timeout: 30000 });
-                await sha1Input.fill('');
-                await sha1Input.type(sha1Fingerprint, { delay: 15 });
+                await fillInputFastWithFallback(appGeniePage, sha1Input, sha1Fingerprint, 'AppGenie SHA1 input');
             }, 'Fill AppGenie SHA1 input', 3);
             await delay(appGeniePage, 1500);
 

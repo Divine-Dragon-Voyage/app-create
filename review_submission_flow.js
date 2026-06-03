@@ -4,6 +4,20 @@ const PLAY_PROTECTED_WITH_PLAY_PATH = '/protect-with-play';
 const PLAY_RELEASES_OVERVIEW_PATH = '/releases/overview';
 const LATEST_RELEASES_SCREENSHOT_NAME = 'latest-releases-and-bundles.png';
 
+const APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS = [
+    'protection-category-card[debug-id="play-store-card"]',
+    '[debug-id="play-store-card-container"] protection-category-card',
+    '[debug-id="play-store-card-container"]'
+];
+
+const APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS = [
+    'protection-category-card[debug-id="play-store-card"] button[debug-id="expansion-button"][aria-label="Show details"]',
+    'protection-category-card[debug-id="play-store-card"] button[debug-id="expansion-button"]',
+    '[debug-id="play-store-card-container"] button[debug-id="expansion-button"][aria-label="Show details"]',
+    '[debug-id="play-store-card-container"] button[debug-id="expansion-button"]',
+    'protection-category-card[debug-id="play-store-card"] button[aria-label="Show details"]'
+];
+
 const APP_SIGNING_MANAGE_BUTTON_SELECTORS = [
     'button[aria-label="Manage Play app signing"]',
     'button[debug-id="cta-button"]:has-text("Manage Play app signing")',
@@ -38,6 +52,8 @@ function buildReviewScreenshotPath(rootDir, appName) {
 }
 
 module.exports = {
+    APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
+    APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
     APP_SIGNING_MANAGE_BUTTON_SELECTORS,
     APP_SIGNING_SHA1_REGEX,
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
