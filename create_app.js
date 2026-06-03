@@ -45,6 +45,17 @@ const {
     buildReviewScreenshotPath,
     extractSha1Fingerprint
 } = require('./review_submission_flow');
+const {
+    AD_ID_ACK_CHECKBOX_SELECTOR,
+    CREATE_APP_EN_US_OPTION_SELECTORS,
+    CREATE_APP_LANGUAGE_BUTTON_SELECTORS,
+    CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR,
+    PRODUCTION_EDIT_RELEASE_SELECTORS,
+    RELEASE_UPDATE_DECLARATION_SELECTORS,
+    hasBlockingReleaseErrorText,
+    isAdIdReleasePermissionError,
+    isEnUsLanguageText
+} = require('./release_error_flow');
 
 // Default delay (ms). Increase if VPS is slow.
 const DELAY = 3000;
@@ -2040,6 +2051,62 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             );
         };
 
+        const readCreateAppLanguageText = async () => {
+            const dropdown = page.locator(CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR).first();
+            const buttonText = await dropdown.locator('.button-text').first().innerText().catch(() => '');
+            const ariaText = await dropdown.locator('[role="button"]').first().getAttribute('aria-label').catch(() => '');
+            return String(`${buttonText} ${ariaText}`).replace(/\s+/g, ' ').trim();
+        };
+
+        const ensureCreateAppDefaultLanguageEnUs = async () => {
+            await retryAction(async () => {
+                const dropdown = page.locator(CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR).first();
+                await dropdown.waitFor({ state: 'visible', timeout: 20000 });
+
+                const currentLanguage = await readCreateAppLanguageText();
+                if (isEnUsLanguageText(currentLanguage)) {
+                    console.log('[CREATE] Default language is already en-US.');
+                    return;
+                }
+
+                console.log(`[CREATE] Default language is "${currentLanguage || 'unknown'}"; selecting en-US...`);
+                let languageButton = null;
+                for (const selector of CREATE_APP_LANGUAGE_BUTTON_SELECTORS) {
+                    const candidate = page.locator(selector).first();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        languageButton = candidate;
+                        break;
+                    }
+                }
+                if (!languageButton) {
+                    throw new Error('Default language dropdown button not found.');
+                }
+
+                await clickLocatorRobust(languageButton, 'Default language dropdown', 10000);
+                await delay(page, 1000);
+
+                let enUsOption = null;
+                for (const selector of CREATE_APP_EN_US_OPTION_SELECTORS) {
+                    const candidate = page.locator(selector).first();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        enUsOption = candidate;
+                        break;
+                    }
+                }
+                if (!enUsOption) {
+                    throw new Error('English (United States) - en-US option not found.');
+                }
+
+                await clickLocatorRobust(enUsOption, 'English (United States) - en-US option', 10000);
+                await delay(page, 1500);
+
+                const updatedLanguage = await readCreateAppLanguageText();
+                if (!isEnUsLanguageText(updatedLanguage)) {
+                    throw new Error(`Default language is still not en-US: ${updatedLanguage || 'unknown'}`);
+                }
+            }, 'Ensure default language en-US', 3);
+        };
+
         await openCreateFormWithRetry();
 
             // Fill app name and package name.
@@ -2071,6 +2138,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             } else {
                 console.log('Warning: Check availability button not found, continuing...');
             }
+
+            await ensureCreateAppDefaultLanguageEnUs();
+            await delay(page, 1500);
 
             // Randomly choose App or Game, and verify the selected state.
             const isApp = Math.random() < 0.5;
@@ -3519,7 +3589,18 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 .first()
                 .innerText()
                 .catch(() => '');
-            return errorDetails || 'We found some problems with your release / Errors, warnings and messages';
+            const pageText = await page.locator('body').innerText().catch(() => '');
+            const combinedText = `${errorDetails}\n${pageText}`;
+            if (isAdIdReleasePermissionError(combinedText)) {
+                return combinedText;
+            }
+            if (!hasBlockingReleaseErrorText(combinedText)) {
+                return '';
+            }
+            if (errorDetails) {
+                return errorDetails;
+            }
+            return 'We found some problems with your release / Errors, warnings and messages';
         }
 
         function createReleaseNeedFixError(reason) {
@@ -3527,6 +3608,85 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             error.code = 'RELEASE_NEED_FIX';
             error.needFix = true;
             return error;
+        }
+
+        async function ensureAdIdReleaseErrorsAcknowledged() {
+            await retryAction(async () => {
+                const ackCheckbox = page.locator(AD_ID_ACK_CHECKBOX_SELECTOR).first();
+                await ackCheckbox.waitFor({ state: 'visible', timeout: 60000 });
+
+                const isSelected = async () => {
+                    return await ackCheckbox.evaluate((root) => {
+                        const input = root.querySelector('input[type="checkbox"]');
+                        return Boolean(
+                            (input && input.checked) ||
+                            (input && input.getAttribute('aria-checked') === 'true') ||
+                            root.querySelector('.mdc-checkbox--selected, input[type="checkbox"]:checked, [aria-checked="true"]')
+                        );
+                    }).catch(() => false);
+                };
+
+                if (!(await isSelected())) {
+                    const clickTarget = ackCheckbox.locator('.mdc-checkbox, .checkbox-content').first();
+                    await clickLocatorRobust(clickTarget, 'AD_ID turn off release errors checkbox', 15000);
+                    await delay(page, 1200);
+                }
+
+                if (!(await isSelected())) {
+                    throw new Error('AD_ID turn off release errors checkbox is not selected.');
+                }
+            }, 'Check AD_ID turn off release errors acknowledgement', 4);
+        }
+
+        async function reopenProductionDraftReleaseForReview() {
+            console.log('[RELEASE] Returning to Production draft release after AD_ID fix...');
+            await gotoAppSubPage('/tracks/production', 'Production', 5000);
+            await randomDelay(page, 3000, 5000);
+
+            await clickFirstVisibleSelectorOn(page, PRODUCTION_EDIT_RELEASE_SELECTORS, 'Edit release button', 5000);
+            await randomDelay(page, 5000, 7000);
+
+            console.log('[RELEASE] Reopening review page without re-uploading AAB...');
+            await clickMainButton('Next');
+            await randomDelay(page, 5000, 7000);
+        }
+
+        async function resolveAdIdReleasePermissionError() {
+            console.log('[RELEASE] AD_ID permission release error detected; updating declaration...');
+            await clickFirstVisibleSelectorOn(page, RELEASE_UPDATE_DECLARATION_SELECTORS, 'Update declaration button', 5000);
+            await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+            await randomDelay(page, 5000, 7000);
+
+            const advertisingIdTitle = page.locator('h1, [role="heading"], simple-html[debug-id="header-text"], [debug-id="header-text"]').filter({
+                hasText: /Advertising ID/i
+            }).first();
+            await advertisingIdTitle.waitFor({ state: 'visible', timeout: 90000 }).catch(() => { });
+
+            console.log('[RELEASE] Enabling AD_ID release error acknowledgement...');
+            await ensureAdIdReleaseErrorsAcknowledged();
+
+            console.log('[RELEASE] Saving AD_ID declaration update...');
+            await clickSaveWithOverflowFallback('Advertising ID release error acknowledgement');
+            await waitSaved(page);
+            await randomDelay(page, 5000, 7000);
+
+            await reopenProductionDraftReleaseForReview();
+
+            const remainingNeedFixReason = await detectReleaseNeedFixReason();
+            if (remainingNeedFixReason) {
+                throw createReleaseNeedFixError(remainingNeedFixReason);
+            }
+        }
+
+        async function handleReleaseNeedFixOrThrow(reason, sourceLabel) {
+            console.log(`[RELEASE] Need manual fix detected${sourceLabel ? ` ${sourceLabel}` : ''}: ${reason}`);
+            if (isAdIdReleasePermissionError(reason)) {
+                await resolveAdIdReleasePermissionError();
+                return;
+            }
+
+            await closeOtherTabsAfterTaskDone();
+            throw createReleaseNeedFixError(reason);
         }
 
         async function sendChangesForReview() {
@@ -3635,9 +3795,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
             const releaseNeedFixReason = await detectReleaseNeedFixReason();
             if (releaseNeedFixReason) {
-                console.log(`[RELEASE] Need manual fix detected: ${releaseNeedFixReason}`);
-                await closeOtherTabsAfterTaskDone();
-                throw createReleaseNeedFixError(releaseNeedFixReason);
+                await handleReleaseNeedFixOrThrow(releaseNeedFixReason, '');
             }
             console.log('[RELEASE] Saving Production release...');
             try {
@@ -3645,11 +3803,12 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             } catch (saveError) {
                 const lateNeedFixReason = await detectReleaseNeedFixReason();
                 if (lateNeedFixReason) {
-                    console.log(`[RELEASE] Need manual fix detected after Save failed: ${lateNeedFixReason}`);
-                    await closeOtherTabsAfterTaskDone();
-                    throw createReleaseNeedFixError(lateNeedFixReason);
+                    await handleReleaseNeedFixOrThrow(lateNeedFixReason, 'after Save failed');
+                    console.log('[RELEASE] Saving Production release after AD_ID fix...');
+                    await clickMainButton('Save');
+                } else {
+                    throw saveError;
                 }
-                throw saveError;
             }
             await randomDelay(page, 5000, 7000);
 
