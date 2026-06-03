@@ -4127,10 +4127,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
-            const clickDataSafetyCheckboxInScope = async (scopeLocator, answerRegex, label, selector = '') => {
+            const clickDataSafetyCheckboxInScope = async (scopeLocator, answerRegex, label, selector = '', revealsSelector = '') => {
                 await retryAction(async () => {
                     await scopeLocator.waitFor({ state: 'visible', timeout: 30000 });
-                    const result = await scopeLocator.evaluate((scope, { answer, selector }) => {
+                    const findTarget = async () => scopeLocator.evaluate((scope, { answer, selector }) => {
                         const answerPattern = new RegExp(answer.source, answer.flags);
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
                         const isVisible = (el) => {
@@ -4153,6 +4153,16 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                             return candidate.matches && candidate.matches('material-checkbox')
                                 ? candidate
                                 : candidate.closest('material-checkbox') || candidate;
+                        };
+                        const visibleRect = (el) => {
+                            if (!isVisible(el)) return null;
+                            const rect = el.getBoundingClientRect();
+                            return {
+                                x: rect.left,
+                                y: rect.top,
+                                width: rect.width,
+                                height: rect.height
+                            };
                         };
 
                         let targetRoot = selector
@@ -4207,23 +4217,70 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
                         const clickRoot = targetRoot || input.closest('material-checkbox, label, .mdc-form-field, [role="checkbox"]') || input;
                         clickRoot.scrollIntoView({ block: 'center', inline: 'nearest' });
-                        if (!isChecked(clickRoot, input)) {
-                            const mdcCheckbox = clickRoot.querySelector('.mdc-checkbox') || clickRoot;
-                            mdcCheckbox.click();
-                            if (!input.checked && input.getAttribute('aria-checked') !== 'true') {
-                                input.click();
-                            }
-                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                        const mdcCheckbox = clickRoot.querySelector('.mdc-checkbox') || input || clickRoot;
+                        const rect = visibleRect(mdcCheckbox) || visibleRect(clickRoot) || visibleRect(input);
+                        if (!rect) {
+                            return { ok: false, reason: 'checkbox click target not visible' };
                         }
-                        return { ok: isChecked(clickRoot, input) };
+                        return {
+                            ok: true,
+                            selected: isChecked(clickRoot, input),
+                            x: rect.x + rect.width / 2,
+                            y: rect.y + rect.height / 2,
+                            inputChecked: Boolean(input.checked),
+                            ariaChecked: String(input.getAttribute('aria-checked') || ''),
+                            visualSelected: Boolean(clickRoot.querySelector('.mdc-checkbox--selected, input[type="checkbox"]:checked, [aria-checked="true"]'))
+                        };
                     }, {
                         answer: regexPayload(answerRegex),
                         selector
                     });
 
+                    const isRevealVisible = async (timeoutMs = 3000) => {
+                        if (!revealsSelector) return true;
+                        return await scopeLocator
+                            .locator(revealsSelector)
+                            .first()
+                            .waitFor({ state: 'visible', timeout: timeoutMs })
+                            .then(() => true)
+                            .catch(() => false);
+                    };
+
+                    let result = await findTarget();
                     if (!result || !result.ok) {
                         throw new Error(`${label} not checked in scope: ${(result && result.reason) || 'unknown reason'}`);
+                    }
+                    if (!result.selected) {
+                        console.log(`[DATA SAFETY] Clicking ${label} checkbox at ${Math.round(result.x)},${Math.round(result.y)}.`);
+                        await page.mouse.click(result.x, result.y);
+                        await delay(page, 1000);
+                    }
+
+                    result = await findTarget();
+                    if (!result || !result.ok || !result.selected) {
+                        throw new Error(
+                            `${label} not checked in scope: ` +
+                            `checked=${result && result.inputChecked}, aria=${(result && result.ariaChecked) || 'none'}, visual=${result && result.visualSelected}`
+                        );
+                    }
+
+                    if (!(await isRevealVisible(3000))) {
+                        console.log(`[DATA SAFETY] ${label} is checked but dependent controls are hidden; toggling checkbox off/on once.`);
+                        await page.mouse.click(result.x, result.y);
+                        await delay(page, 500);
+                        const toggleBack = await findTarget();
+                        if (!toggleBack || !toggleBack.ok) {
+                            throw new Error(`${label} checkbox not found while toggling`);
+                        }
+                        await page.mouse.click(toggleBack.x, toggleBack.y);
+                        await delay(page, 1000);
+                        result = await findTarget();
+                        if (!result || !result.ok || !result.selected) {
+                            throw new Error(`${label} not checked after toggle`);
+                        }
+                        if (!(await isRevealVisible(5000))) {
+                            throw new Error(`${label} dependent controls not visible after toggle`);
+                        }
                     }
                 }, `Data safety ${label}`, 4);
                 console.log(`[DATA SAFETY] Checked ${label}.`);
@@ -4697,7 +4754,13 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
                 for (const action of DATA_SAFETY_USAGE_ACTIONS) {
                     if (action.type === 'checkbox') {
-                        await clickDataSafetyCheckboxInScope(dialog, action.answer, action.label, action.selector || '');
+                        await clickDataSafetyCheckboxInScope(
+                            dialog,
+                            action.answer,
+                            action.label,
+                            action.selector || '',
+                            action.revealsSelector || ''
+                        );
                     } else if (action.type === 'radio') {
                         await clickDataSafetyRadioInScope(dialog, action.answer, action.label, action.groupSelector || '');
                     } else if (action.type === 'save') {

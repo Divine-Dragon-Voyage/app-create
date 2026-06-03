@@ -110,6 +110,7 @@ test('device or other ids usage answers collected ephemeral required app functio
     const requiredAction = DATA_SAFETY_USAGE_ACTIONS.find(action => action.label === 'data collection required');
 
     assert.equal(collectedAction.selector, 'material-checkbox[debug-id="collected-checkbox"]');
+    assert.equal(collectedAction.revealsSelector, 'material-radio-group[debug-id="ephemerality-question"]');
     assert.equal(ephemeralAction.groupSelector, 'material-radio-group[debug-id="ephemerality-question"]');
     assert.equal(requiredAction.groupSelector, 'material-radio-group[debug-id="user-control-question"]');
     assert.deepEqual(

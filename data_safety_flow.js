@@ -74,6 +74,7 @@ const DATA_SAFETY_USAGE_ACTIONS = [
         label: 'Collected',
         type: 'checkbox',
         selector: 'material-checkbox[debug-id="collected-checkbox"]',
+        revealsSelector: 'material-radio-group[debug-id="ephemerality-question"]',
         answer: /^Collected$/i
     },
     {
