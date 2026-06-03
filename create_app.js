@@ -51,6 +51,7 @@ const {
     CREATE_APP_LANGUAGE_BUTTON_SELECTORS,
     CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR,
     PRODUCTION_EDIT_RELEASE_SELECTORS,
+    PRODUCTION_RELEASES_TAB_SELECTORS,
     RELEASE_UPDATE_DECLARATION_SELECTORS,
     hasBlockingReleaseErrorText,
     isAdIdReleasePermissionError,
@@ -3641,6 +3642,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         async function reopenProductionDraftReleaseForReview() {
             console.log('[RELEASE] Returning to Production draft release after AD_ID fix...');
             await gotoAppSubPage('/tracks/production', 'Production', 5000);
+            await randomDelay(page, 3000, 5000);
+
+            console.log('[RELEASE] Opening Production Releases tab...');
+            await clickFirstVisibleSelectorOn(page, PRODUCTION_RELEASES_TAB_SELECTORS, 'Production Releases tab', 5000);
             await randomDelay(page, 3000, 5000);
 
             await clickFirstVisibleSelectorOn(page, PRODUCTION_EDIT_RELEASE_SELECTORS, 'Edit release button', 5000);

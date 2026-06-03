@@ -6,6 +6,7 @@ const {
     CREATE_APP_EN_US_OPTION_SELECTORS,
     CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR,
     PRODUCTION_EDIT_RELEASE_SELECTORS,
+    PRODUCTION_RELEASES_TAB_SELECTORS,
     RELEASE_UPDATE_DECLARATION_SELECTORS,
     hasBlockingReleaseErrorText,
     isAdIdReleasePermissionError,
@@ -43,5 +44,6 @@ test('release error flow selectors cover language and AD_ID recovery controls', 
     assert.ok(CREATE_APP_EN_US_OPTION_SELECTORS.some(selector => /en-US|English \(United States\)/.test(selector)));
     assert.ok(RELEASE_UPDATE_DECLARATION_SELECTORS.some(selector => selector.includes('Update declaration')));
     assert.equal(AD_ID_ACK_CHECKBOX_SELECTOR, 'material-checkbox[debug-id="ack-checkbox"]');
+    assert.ok(PRODUCTION_RELEASES_TAB_SELECTORS.some(selector => selector.includes('aria-label="Releases"')));
     assert.ok(PRODUCTION_EDIT_RELEASE_SELECTORS.some(selector => selector.includes('edit-draft-release-button')));
 });

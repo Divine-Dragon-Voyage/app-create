@@ -22,6 +22,13 @@ const RELEASE_UPDATE_DECLARATION_SELECTORS = [
 
 const AD_ID_ACK_CHECKBOX_SELECTOR = 'material-checkbox[debug-id="ack-checkbox"]';
 
+const PRODUCTION_RELEASES_TAB_SELECTORS = [
+    'tab-button[aria-label="Releases"]',
+    '[role="tab"][aria-label="Releases"]',
+    '[role="tab"]:has-text("Releases")',
+    'tab-button:has-text("Releases")'
+];
+
 const PRODUCTION_EDIT_RELEASE_SELECTORS = [
     'button[debug-id="edit-draft-release-button"]',
     'button:has-text("Edit release")',
@@ -56,6 +63,7 @@ module.exports = {
     CREATE_APP_LANGUAGE_BUTTON_SELECTORS,
     CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR,
     PRODUCTION_EDIT_RELEASE_SELECTORS,
+    PRODUCTION_RELEASES_TAB_SELECTORS,
     RELEASE_UPDATE_DECLARATION_SELECTORS,
     hasBlockingReleaseErrorText,
     isAdIdReleasePermissionError,
