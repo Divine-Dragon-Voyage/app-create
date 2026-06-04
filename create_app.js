@@ -38,7 +38,7 @@ const {
 const {
     APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
     APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
-    APP_SIGNING_MANAGE_BUTTON_SELECTORS,
+    APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS,
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
     APPGENIE_REVIEW_SHA1_INPUT_SELECTOR,
     APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS,
@@ -2854,24 +2854,101 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return null;
         }
 
+        async function findVisiblePlayStoreProtectionCard() {
+            for (const selector of APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS) {
+                const candidates = page.locator(selector);
+                const count = await candidates.count().catch(() => 0);
+                for (let i = 0; i < count; i += 1) {
+                    const candidate = candidates.nth(i);
+                    if (!(await candidate.isVisible().catch(() => false))) {
+                        continue;
+                    }
+                    const text = await candidate.innerText({ timeout: 1000 }).catch(() => '');
+                    if (/Play Store protection/i.test(text)) {
+                        return candidate;
+                    }
+                }
+            }
+            return null;
+        }
+
+        async function findManagePlayAppSigningButton() {
+            for (const selector of APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS) {
+                const candidate = page.locator(selector).first();
+                if (await candidate.isVisible().catch(() => false)) {
+                    return candidate;
+                }
+            }
+
+            const card = await findVisiblePlayStoreProtectionCard();
+            if (!card) {
+                return null;
+            }
+
+            const rows = card.locator(
+                'protection-feature-list[debug-id="expanded-feature-list"] .feature-row, ' +
+                'protection-feature-list[debug-id="expanded-feature-list"] .pc-card, ' +
+                '.feature-row, .pc-card'
+            );
+            const count = await rows.count().catch(() => 0);
+            for (let i = 0; i < count; i += 1) {
+                const row = rows.nth(i);
+                if (!(await row.isVisible().catch(() => false))) {
+                    continue;
+                }
+                const text = await row.innerText({ timeout: 1000 }).catch(() => '');
+                if (!/Protect app signing key/i.test(text)) {
+                    continue;
+                }
+                const button = row.locator(
+                    'button[aria-label="Manage Play app signing"], ' +
+                    'button[debug-id="cta-button"]:has-text("Manage Play app signing"), ' +
+                    'button:has-text("Manage Play app signing")'
+                ).first();
+                if (await button.isVisible().catch(() => false)) {
+                    return button;
+                }
+            }
+
+            return null;
+        }
+
+        async function isAppSigningPageVisible() {
+            if (/app-signing/i.test(page.url())) {
+                return true;
+            }
+            const markers = [
+                page.getByText(/^App signing$/i).first(),
+                page.getByText(/App signing key certificate/i).first(),
+                page.getByText(/SHA-1 certificate fingerprint/i).first()
+            ];
+            for (const marker of markers) {
+                if (await marker.isVisible().catch(() => false)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         async function ensurePlayStoreProtectionDetailsExpanded() {
-            const manageButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS);
+            const manageButton = await findManagePlayAppSigningButton();
             if (manageButton) return;
 
             console.log('[REVIEW_UPLOAD] Expanding Play Store protection details...');
             await retryAction(async () => {
-                const visibleManage = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS);
+                const visibleManage = await findManagePlayAppSigningButton();
                 if (visibleManage) return;
 
-                let expandButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS);
-                if (!expandButton) {
-                    for (const selector of APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS) {
-                        const card = page.locator(selector).filter({ hasText: /Play Store protection/i }).first();
-                        if (await card.isVisible().catch(() => false)) {
-                            expandButton = card.locator('button[debug-id="expansion-button"], button[aria-label="Show details"]').first();
-                            break;
-                        }
-                    }
+                const card = await findVisiblePlayStoreProtectionCard();
+                if (!card) {
+                    throw new Error('Play Store protection card not found.');
+                }
+
+                let expandButton = card.locator(
+                    'button[debug-id="expansion-button"], button[aria-label="Show details"], button[aria-label="Hide details"]'
+                ).first();
+                if (!(await expandButton.isVisible().catch(() => false))) {
+                    expandButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS);
                 }
 
                 if (!expandButton || !(await expandButton.isVisible().catch(() => false))) {
@@ -2884,9 +2961,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     await delay(page, 2000);
                 }
 
-                const expandedManageButton = await firstVisibleLocatorFromSelectors(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS);
+                const expandedManageButton = await findManagePlayAppSigningButton();
                 if (!expandedManageButton) {
-                    throw new Error('Manage Play app signing button not visible after expanding Play Store protection.');
+                    throw new Error('Manage Play app signing button not visible in Protect app signing key row after expanding Play Store protection.');
                 }
             }, 'Expand Play Store protection details', 3);
         }
@@ -2928,23 +3005,25 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
             await ensurePlayStoreProtectionDetailsExpanded();
 
-            const appSigningRow = page.locator('.feature-row, .pc-card, div').filter({
-                hasText: /Protect app signing key/i
-            }).first();
-            const manageButtonInRow = appSigningRow.locator(
-                'button[aria-label="Manage Play app signing"], button[debug-id="cta-button"], button:has-text("Manage Play app signing")'
-            ).first();
             await retryAction(async () => {
-                if (await manageButtonInRow.isVisible().catch(() => false)) {
-                    await clickLocatorRobust(manageButtonInRow, 'Manage Play app signing button', 15000);
-                    return;
-                }
-                await clickFirstVisibleSelectorOn(page, APP_SIGNING_MANAGE_BUTTON_SELECTORS, 'Manage Play app signing button', 1000);
-            }, 'Open Play app signing', 3);
+                await ensurePlayStoreProtectionDetailsExpanded();
 
-            await page.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
-            await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
-            await delay(page, 5000);
+                const manageButton = await findManagePlayAppSigningButton();
+                if (!manageButton) {
+                    throw new Error('Manage Play app signing button not found in Protect app signing key row.');
+                }
+
+                await clickLocatorRobust(manageButton, 'Manage Play app signing button', 15000);
+                await page.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => { });
+                await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
+                await delay(page, 5000);
+
+                if (!(await isAppSigningPageVisible())) {
+                    const wrongUrl = page.url();
+                    await gotoAppSubPage(PLAY_PROTECTED_WITH_PLAY_PATH, 'Protected with Play', 3000).catch(() => { });
+                    throw new Error(`Manage Play app signing did not open App signing page (url: ${wrongUrl}).`);
+                }
+            }, 'Open Play app signing', 3);
 
             console.log('[REVIEW_UPLOAD] Reading SHA-1 certificate fingerprint...');
             let sha1 = '';

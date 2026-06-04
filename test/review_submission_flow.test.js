@@ -4,6 +4,7 @@ const path = require('node:path');
 const {
     APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
     APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
+    APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS,
     APP_SIGNING_MANAGE_BUTTON_SELECTORS,
     APP_SIGNING_SHA1_REGEX,
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
@@ -54,6 +55,17 @@ test('review submission selectors cover Play and AppGenie controls', () => {
     assert.equal(APPGENIE_REVIEW_FILE_INPUT_SELECTOR, '.ant-modal input[type="file"][accept*="image"]');
     assert.ok(APPGENIE_REVIEW_SHA1_INPUT_SELECTOR.includes('SHA1'));
     assert.ok(APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS.some(selector => selector.includes('ant-btn-primary')));
+});
+
+test('app signing manage selectors are scoped to Play Store protection app signing row', () => {
+    assert.ok(APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS.length >= 4);
+
+    for (const selector of APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS) {
+        assert.match(selector, /play-store-card|play-store-card-container|Play Store protection/);
+        assert.match(selector, /Protect app signing key/);
+        assert.match(selector, /Manage Play app signing/);
+        assert.doesNotMatch(selector, /^button\[debug-id="cta-button"\]/);
+    }
 });
 
 test('builds review screenshot path under task temp directory', () => {

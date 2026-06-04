@@ -7,7 +7,8 @@ const LATEST_RELEASES_SCREENSHOT_NAME = 'latest-releases-and-bundles.png';
 const APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS = [
     'protection-category-card[debug-id="play-store-card"]',
     '[debug-id="play-store-card-container"] protection-category-card',
-    '[debug-id="play-store-card-container"]'
+    '[debug-id="play-store-card-container"]',
+    'protection-category-card:has-text("Play Store protection")'
 ];
 
 const APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS = [
@@ -23,6 +24,15 @@ const APP_SIGNING_MANAGE_BUTTON_SELECTORS = [
     'button[debug-id="cta-button"]:has-text("Manage Play app signing")',
     'button:has-text("Manage Play app signing")',
     '[role="button"]:has-text("Manage Play app signing")'
+];
+
+const APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS = [
+    'protection-category-card[debug-id="play-store-card"] .feature-row:has-text("Protect app signing key") button[aria-label="Manage Play app signing"]',
+    'protection-category-card[debug-id="play-store-card"] .feature-row:has-text("Protect app signing key") button[debug-id="cta-button"]:has-text("Manage Play app signing")',
+    '[debug-id="play-store-card-container"] .feature-row:has-text("Protect app signing key") button[aria-label="Manage Play app signing"]',
+    '[debug-id="play-store-card-container"] .feature-row:has-text("Protect app signing key") button[debug-id="cta-button"]:has-text("Manage Play app signing")',
+    'protection-category-card:has-text("Play Store protection") .feature-row:has-text("Protect app signing key") button[aria-label="Manage Play app signing"]',
+    'protection-category-card:has-text("Play Store protection") .feature-row:has-text("Protect app signing key") button[debug-id="cta-button"]:has-text("Manage Play app signing")'
 ];
 
 const APP_SIGNING_SHA1_REGEX = /(?<![:A-Fa-f0-9])(?:[A-Fa-f0-9]{2}:){19}[A-Fa-f0-9]{2}(?![:A-Fa-f0-9])/;
@@ -54,6 +64,7 @@ function buildReviewScreenshotPath(rootDir, appName) {
 module.exports = {
     APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
     APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
+    APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS,
     APP_SIGNING_MANAGE_BUTTON_SELECTORS,
     APP_SIGNING_SHA1_REGEX,
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
