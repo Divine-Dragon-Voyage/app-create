@@ -3,6 +3,16 @@ const path = require('path');
 const crypto = require('crypto');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
+const {
+    OVERFLOW_MORE_OPTIONS_SELECTORS,
+    OVERFLOW_SAVE_MENU_SELECTORS
+} = require('./overflow_save_flow');
+const {
+    CREATE_APP_EN_US_OPTION_SELECTORS,
+    CREATE_APP_LANGUAGE_BUTTON_SELECTORS,
+    CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR,
+    isEnUsLanguageText
+} = require('./release_error_flow');
 
 // Default delay (ms). Increase if VPS is slow.
 const DELAY = 3000;
@@ -763,6 +773,38 @@ async function retryAction(action, label = 'action', retries = 3) {
     }
 }
 
+async function clickLocatorRobust(locator, label = 'element', timeoutMs = 10000) {
+    await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+    await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
+    try {
+        await locator.click({ timeout: timeoutMs });
+        return;
+    } catch (normalClickError) {
+        try {
+            await locator.click({ timeout: timeoutMs, force: true });
+            return;
+        } catch (forceClickError) {
+            try {
+                await locator.evaluate((el) => {
+                    if (typeof el.click === 'function') {
+                        el.click();
+                    } else {
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    }
+                });
+                return;
+            } catch (evaluateClickError) {
+                throw new Error(
+                    `${label} click failed. ` +
+                    `normal=${normalClickError.message}; ` +
+                    `force=${forceClickError.message}; ` +
+                    `evaluate=${evaluateClickError.message}`
+                );
+            }
+        }
+    }
+}
+
 async function waitSaved(page) {
     console.log('Waiting for save confirmation...');
     // Loosely match various "saved" messages (case-insensitive).
@@ -961,6 +1003,62 @@ async function runOnce(task, appListUrl, statusManager) {
             );
         };
 
+        const readCreateAppLanguageText = async () => {
+            const dropdown = page.locator(CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR).first();
+            const buttonText = await dropdown.locator('.button-text').first().innerText().catch(() => '');
+            const ariaText = await dropdown.locator('[role="button"]').first().getAttribute('aria-label').catch(() => '');
+            return String(`${buttonText} ${ariaText}`).replace(/\s+/g, ' ').trim();
+        };
+
+        const ensureCreateAppDefaultLanguageEnUs = async () => {
+            await retryAction(async () => {
+                const dropdown = page.locator(CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR).first();
+                await dropdown.waitFor({ state: 'visible', timeout: 20000 });
+
+                const currentLanguage = await readCreateAppLanguageText();
+                if (isEnUsLanguageText(currentLanguage)) {
+                    console.log('[CREATE] Default language is already en-US.');
+                    return;
+                }
+
+                console.log(`[CREATE] Default language is "${currentLanguage || 'unknown'}"; selecting en-US...`);
+                let languageButton = null;
+                for (const selector of CREATE_APP_LANGUAGE_BUTTON_SELECTORS) {
+                    const candidate = page.locator(selector).first();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        languageButton = candidate;
+                        break;
+                    }
+                }
+                if (!languageButton) {
+                    throw new Error('Default language dropdown button not found.');
+                }
+
+                await clickLocatorRobust(languageButton, 'Default language dropdown', 10000);
+                await delay(page, 1000);
+
+                let enUsOption = null;
+                for (const selector of CREATE_APP_EN_US_OPTION_SELECTORS) {
+                    const candidate = page.locator(selector).first();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        enUsOption = candidate;
+                        break;
+                    }
+                }
+                if (!enUsOption) {
+                    throw new Error('English (United States) - en-US option not found.');
+                }
+
+                await clickLocatorRobust(enUsOption, 'English (United States) - en-US option', 10000);
+                await delay(page, 1500);
+
+                const updatedLanguage = await readCreateAppLanguageText();
+                if (!isEnUsLanguageText(updatedLanguage)) {
+                    throw new Error(`Default language is still not en-US: ${updatedLanguage || 'unknown'}`);
+                }
+            }, 'Ensure default language en-US', 3);
+        };
+
         await openCreateFormWithRetry();
 
             // Fill app name and package name.
@@ -992,6 +1090,9 @@ async function runOnce(task, appListUrl, statusManager) {
             } else {
                 console.log('Warning: Check availability button not found, continuing...');
             }
+
+            await ensureCreateAppDefaultLanguageEnUs();
+            await delay(page, 1500);
 
             // Randomly choose App or Game, and verify the selected state.
             const isApp = Math.random() < 0.5;
@@ -1206,7 +1307,7 @@ async function runOnce(task, appListUrl, statusManager) {
                     return;
                 }
 
-                await buttonByCard.waitFor({ state: 'visible', timeout: 12000 });
+                await buttonByCard.waitFor({ state: 'visible', timeout: 20000 });
                 await buttonByCard.scrollIntoViewIfNeeded({ timeout: 5000 });
                 await buttonByCard.click({ timeout: 10000 });
             }, `Start ${sectionTitle} declaration`);
@@ -1235,7 +1336,7 @@ async function runOnce(task, appListUrl, statusManager) {
             }, `Select checkbox containing "${textRegex}"`);
         }
 
-        async function clickMainButton(text) {
+        async function clickMainButtonOn(targetPage, text) {
             console.log(`Looking for and clicking button: ${text}...`);
             await retryAction(async () => {
                 const selectors = [
@@ -1246,7 +1347,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 ];
                 let foundBtn = null;
                 for (const sel of selectors) {
-                    const loc = page.locator(sel).first();
+                    const loc = targetPage.locator(sel).first();
                     if (await loc.isVisible().catch(() => false)) {
                         if (sel === '[debug-id="main-button"]') {
                             const content = await loc.innerText().catch(() => '');
@@ -1263,10 +1364,64 @@ async function runOnce(task, appListUrl, statusManager) {
                 ).catch(() => false);
                 if (isDisabled) throw new Error(`Button "${text}" is disabled`);
 
-                await foundBtn.scrollIntoViewIfNeeded({ timeout: 5000 });
-                await foundBtn.click({ timeout: 10000 });
-                await delay(page, 3000);
+                await clickLocatorRobust(foundBtn, `"${text}" button`, 10000);
+                await delay(targetPage, 3000);
             }, `Click "${text}" button`);
+        }
+
+        async function clickMainButton(text) {
+            await clickMainButtonOn(page, text);
+        }
+
+        async function clickOverflowSaveFallback(contextLabel = 'Save') {
+            console.log(`[SAVE] ${contextLabel}: trying More options -> Save fallback...`);
+            await retryAction(async () => {
+                let moreOptionsButton = null;
+                for (const selector of OVERFLOW_MORE_OPTIONS_SELECTORS) {
+                    const candidate = page.locator(selector).last();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        moreOptionsButton = candidate;
+                        break;
+                    }
+                }
+                if (!moreOptionsButton) {
+                    throw new Error(`${contextLabel} More options button not found.`);
+                }
+
+                await clickLocatorRobust(moreOptionsButton, `${contextLabel} More options button`, 10000);
+                await delay(page, 1000);
+
+                let saveMenuItem = null;
+                for (const selector of OVERFLOW_SAVE_MENU_SELECTORS) {
+                    const candidate = page.locator(selector).last();
+                    if (await candidate.isVisible().catch(() => false)) {
+                        saveMenuItem = candidate;
+                        break;
+                    }
+                }
+                if (!saveMenuItem) {
+                    throw new Error(`${contextLabel} Save menu item not found.`);
+                }
+
+                await clickLocatorRobust(saveMenuItem, `${contextLabel} Save menu item`, 10000);
+                await delay(page, 3000);
+            }, `${contextLabel} More options Save fallback`, 3);
+        }
+
+        async function clickSaveWithOverflowFallback(contextLabel = 'Save') {
+            try {
+                await clickMainButton('Save');
+            } catch (err) {
+                const message = String((err && err.message) || '');
+                if (!/Main button with text "Save" not found/i.test(message)) {
+                    throw err;
+                }
+                await clickOverflowSaveFallback(contextLabel);
+            }
+        }
+
+        async function clickFinancialFeaturesSave() {
+            await clickSaveWithOverflowFallback('Financial features');
         }
 
         // --- Execute declarations flow in strict one-pass mode ---
@@ -1283,9 +1438,9 @@ async function runOnce(task, appListUrl, statusManager) {
         markStepDone(PROGRESS_STEP_ADS_DONE);
 
         await goToAppContent();
-        console.log('Executing declaration 2/7: App access...');
-        await clickStartDeclaration('App access');
-        await selectRadio('All functionality in my app is available without any access restrictions');
+        console.log('Executing declaration 2/7: Sign in details...');
+        await clickStartDeclaration('Sign in details');
+        await selectRadio(/^No/);
         await clickMainButton('Save');
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
@@ -1345,7 +1500,7 @@ async function runOnce(task, appListUrl, statusManager) {
         await clickStartDeclaration('Financial features');
         await selectCheckbox("My app doesn't provide any financial features");
         await clickMainButton('Next');
-        await clickMainButton('Save');
+        await clickFinancialFeaturesSave();
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_FINANCE_DONE);
 
@@ -1358,10 +1513,12 @@ async function runOnce(task, appListUrl, statusManager) {
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_HEALTH_DONE);
 
-            // 8-11. Release navigation (strict: must really enter target pages before continuing)
+            // Country availability uses direct URL fallback when the left navigation or tab is not ready.
             const testAndReleaseUrl = `${appBasePath}/test-and-release`;
             const productionUrl = `${appBasePath}/tracks/production`;
             const productionCountryAvailabilityUrl = `${productionUrl}?tab=countryAvailability`;
+            const countriesRegionsPattern = /Countries\s*\/\s*regions/i;
+            const addCountriesRegionsPattern = /Add countries\s*\/\s*regions/i;
             const testAndReleaseLink = page.locator(
                 'a[href*="/test-and-release"], a.item-link:has(.item-label:has-text("Test and release"))'
             ).first();
@@ -1369,11 +1526,11 @@ async function runOnce(task, appListUrl, statusManager) {
                 'a[href*="/tracks/production"], a.item-link:has(.item-label:has-text("Production"))'
             ).first();
             const countriesRegionsTab = page.locator(
-                '[role="tab"]:has-text("Countries / regions"), a:has-text("Countries / regions"), button:has-text("Countries / regions")'
-            ).first();
+                '[role="tab"], tab-button, a, button'
+            ).filter({ hasText: countriesRegionsPattern }).first();
             const addCountriesBtn = page.locator(
-                'button:has-text("Add countries / regions"), [role="button"]:has-text("Add countries / regions"), a:has-text("Add countries / regions"), .mdc-button:has-text("Add countries / regions")'
-            ).first();
+                'button, [role="button"], a'
+            ).filter({ hasText: addCountriesRegionsPattern }).first();
 
             // 8. Test and release
             console.log('Navigating to "Test and release"...');
@@ -1408,7 +1565,7 @@ async function runOnce(task, appListUrl, statusManager) {
                 const countriesTabVisible = await countriesRegionsTab.isVisible().catch(() => false);
                 const addButtonVisible = await addCountriesBtn.isVisible().catch(() => false);
                 if (!countriesTabVisible && !addButtonVisible) {
-                    throw new Error('Production page loaded but Countries/regions controls are not ready yet.');
+                    console.log('[RELEASE] Production page loaded but Countries/regions controls are not visible yet; continuing with fallback navigation.');
                 }
             }, 'Open Production', 3);
             await delay(page, 3000);
