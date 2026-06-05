@@ -1755,7 +1755,7 @@ async function runOnce(task, appListUrl, statusManager) {
         }
 
         if (i < selectedTasks.length - 1) {
-            const wait = 30000 + Math.random() * 40000;
+            const wait = 15000 + Math.random() * 10000;
             console.log('Wait until next iteration:', formatDuration(Math.round(wait / 1000)));
             await new Promise(r => setTimeout(r, wait));
         }
