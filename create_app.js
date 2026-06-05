@@ -1,10 +1,22 @@
 ﻿const fs = require('fs');
 const path = require('path');
+/*
+ * 主脚本总览：
+ * 1. 从 Excel/CSV 读取应用任务，并维护 status / progress_step。
+ * 2. 通过 Chrome CDP 接管已登录浏览器，进入 Google Play Console 创建应用。
+ * 3. 依次完成 App content、国家地区、隐私政策、内容分级、Data safety、商店资料、Production release。
+ * 4. 发布后读取 SHA-1、截取 Latest releases 页面，并回传到 AppGenie 提交审核。
+ *
+ * 维护提示：
+ * - 本文件仍是主流程编排文件，页面选择器和复杂兜底逻辑尽量下沉到独立 flow 文件。
+ * - status/progress_step 目前主要用于记录和排查，不是严格的断点续跑控制器。
+ */
 const crypto = require('crypto');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
+// Data safety 页面答案和稳定选择器集中在独立模块，避免主流程里散落大量常量。
 const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
@@ -24,17 +36,21 @@ const {
     DATA_SAFETY_DATA_DELETION_NO_ANSWER_TEXT,
     pickLastVisibleDataSafetyNextButton
 } = require('./data_safety_flow');
+// 清理相关逻辑：临时下载根目录和辅助标签页识别。
 const {
     buildTempDownloadRoot,
     shouldCloseAuxiliaryPage
 } = require('./cleanup_helpers');
+// Google Sites 页面结构经常变化，删除 header 的选择器单独维护。
 const {
     GOOGLE_SITES_DELETE_HEADER_SELECTORS
 } = require('./google_sites_flow');
+// Play Console 部分页面 Save 会藏在右下角三点菜单里。
 const {
     OVERFLOW_MORE_OPTIONS_SELECTORS,
     OVERFLOW_SAVE_MENU_SELECTORS
 } = require('./overflow_save_flow');
+// 发布后提审回传流程：Play App signing、截图路径、AppGenie 提审弹窗选择器。
 const {
     APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS,
     APP_SIGNING_PLAY_STORE_PROTECTION_EXPAND_SELECTORS,
@@ -47,6 +63,7 @@ const {
     buildReviewScreenshotPath,
     extractSha1Fingerprint
 } = require('./review_submission_flow');
+// Release 错误处理：默认语言、AD_ID release error、Production Releases tab 等选择器。
 const {
     AD_ID_ACK_CHECKBOX_SELECTOR,
     CREATE_APP_EN_US_OPTION_SELECTORS,
@@ -60,9 +77,10 @@ const {
     isEnUsLanguageText
 } = require('./release_error_flow');
 
-// Default delay (ms). Increase if VPS is slow.
+// 默认等待时间。VPS 慢或页面加载不稳定时，优先调具体步骤，不建议盲目调大这个全局值。
 const DELAY = 3000;
 
+// 输入表头兼容：支持中文列名和英文列名。
 const APP_NAME_HEADER_CANDIDATES = new Set([
     '\u5e94\u7528\u540d\u79f0',
     '\u5e94\u7528\u540d',
@@ -78,6 +96,7 @@ const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
     'applicationid'
 ]);
 
+// Google Play 包名格式校验和运行时环境变量。
 const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
 const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
@@ -89,12 +108,16 @@ const WEB_USERNAME_ENV = 'APP_CREATE_WEB_USERNAME';
 const WEB_PASSWORD_ENV = 'APP_CREATE_WEB_PASSWORD';
 const CONTACT_EMAIL_ENV = 'APP_CREATE_CONTACT_EMAIL';
 const DEFAULT_LOGIN_WAIT_SECONDS = 900;
+
+// 任务状态：PARTIAL 表示任务已开始但未完成；NEED_FIX 表示需要人工介入。
 const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
 const PROGRESS_HEADER_CANDIDATES = new Set(['progressstep', 'progress', '\u8fdb\u5ea6', '\u6b65\u9aa4']);
 const STATUS_PARTIAL = 'PARTIAL';
 const STATUS_DONE = 'DONE';
 const STATUS_FAILED = 'FAILED';
 const STATUS_NEED_FIX = 'NEED_FIX';
+
+// 进度步骤按实际执行顺序排列，用于日志记录和 ensureTaskProgressAtLeast 比较。
 const PROGRESS_STEP_APP_CREATED = 'APP_CREATED';
 const PROGRESS_STEP_ADS_DONE = 'ADS_DONE';
 const PROGRESS_STEP_APP_ACCESS_DONE = 'APP_ACCESS_DONE';
@@ -151,6 +174,7 @@ function normalizeHeader(value) {
         .replace(/[\s_-]/g, '');
 }
 
+// 解析命令行输入文件路径：启动器通常传入显式路径，命令行也可省略后自动找根目录数据文件。
 function parseCliArgs() {
     const args = process.argv.slice(2);
     let inputFileArg;
@@ -166,6 +190,7 @@ function parseCliArgs() {
     return { inputFileArg };
 }
 
+// 配置目录由启动器通过环境变量指定；本地直接运行时默认使用当前项目目录。
 function resolveConfigDirectory() {
     const configuredDir = String(process.env[CONFIG_DIR_ENV] || '').trim();
     if (!configuredDir) {
@@ -174,6 +199,7 @@ function resolveConfigDirectory() {
     return path.resolve(configuredDir);
 }
 
+// 首次运行时自动生成 developer_url.txt 模板，避免用户不知道该填什么。
 function ensureDeveloperUrlTemplate(configPath) {
     if (fs.existsSync(configPath)) {
         return;
@@ -187,6 +213,7 @@ function ensureDeveloperUrlTemplate(configPath) {
     }
 }
 
+// 将用户粘贴的开发者 URL 归一化成 developers/<id> 基础路径，后续拼 app-list 和 app 子页面。
 function parseDeveloperBaseUrl(rawUrl) {
     const text = String(rawUrl || '').trim();
     if (!text) {
@@ -219,6 +246,7 @@ function parseDeveloperBaseUrl(rawUrl) {
     return match[1];
 }
 
+// 开发者入口优先级：完整 URL 环境变量 > developer_id 环境变量 > developer_url.txt。
 function loadDeveloperConsoleAppListUrl() {
     const envUrl = String(process.env[DEVELOPER_URL_ENV] || '').trim();
     if (envUrl) {
@@ -260,6 +288,7 @@ function loadDeveloperConsoleAppListUrl() {
     return { appListUrl: `${baseUrl}/app-list`, configPath };
 }
 
+// 输入文件可显式指定；未指定时从项目根目录挑第一个 xlsx/xls/csv。
 function resolveInputExcelFile(inputFileArg) {
     if (inputFileArg) {
         const explicitPath = path.resolve(process.cwd(), inputFileArg);
@@ -290,6 +319,7 @@ function resolveInputExcelFile(inputFileArg) {
     return path.resolve(process.cwd(), dataFiles[0]);
 }
 
+// CSV 不直接回写原文件，状态独立写入配置目录下的 csv-state JSON。
 function buildCsvStateFilePath(csvPath) {
     const configDir = resolveConfigDirectory();
     const stateDir = path.resolve(configDir, CSV_STATE_DIR_NAME);
@@ -300,6 +330,7 @@ function buildCsvStateFilePath(csvPath) {
     return path.join(stateDir, `${hash}.json`);
 }
 
+// 运行期输入描述。当前 CSV 仍直接读取源文件，状态通过 JSON 旁路维护。
 function resolveRuntimeInput(inputFilePath) {
     const ext = path.extname(inputFilePath).toLowerCase();
     return {
@@ -309,6 +340,7 @@ function resolveRuntimeInput(inputFilePath) {
     };
 }
 
+// 读取 CSV 状态文件；文件不存在或损坏时返回空状态，避免阻断主流程。
 function loadCsvStateRows(stateFilePath) {
     if (!stateFilePath || !fs.existsSync(stateFilePath)) {
         return {};
@@ -329,6 +361,7 @@ function loadCsvStateRows(stateFilePath) {
     }
 }
 
+// 保存 CSV 状态：以包名为 key，记录 status/progress_step 和基础展示信息。
 function saveCsvStateRows(stateFilePath, sourceFilePath, rows) {
     if (!stateFilePath) return;
 
@@ -340,10 +373,12 @@ function saveCsvStateRows(stateFilePath, sourceFilePath, rows) {
     fs.writeFileSync(stateFilePath, JSON.stringify(payload, null, 2), 'utf8');
 }
 
+// 包名大小写统一归一化，避免 CSV 状态匹配漂移。
 function getCsvStateKey(packageName) {
     return String(packageName || '').trim().toLowerCase();
 }
 
+// 从表头列表中挑出候选列，目前保留给后续扩展使用。
 function pickHeader(headers, candidates) {
     for (const header of headers) {
         if (candidates.has(normalizeHeader(header))) {
@@ -353,6 +388,7 @@ function pickHeader(headers, candidates) {
     return null;
 }
 
+// 状态值严格归一化，只接受脚本认识的状态，防止 Excel 手工填写污染流程。
 function normalizeStatusValue(value) {
     const text = String(value || '').trim().toUpperCase();
     if (text === STATUS_DONE) return STATUS_DONE;
@@ -362,16 +398,19 @@ function normalizeStatusValue(value) {
     return '';
 }
 
+// 进度值严格按 PROGRESS_STEP_ORDER 识别。
 function normalizeProgressStep(value) {
     const text = String(value || '').trim().toUpperCase();
     if (PROGRESS_STEP_SET.has(text)) return text;
     return '';
 }
 
+// 比较两个进度步骤的先后顺序。
 function progressRank(step) {
     return PROGRESS_STEP_ORDER.indexOf(normalizeProgressStep(step));
 }
 
+// 可选输出机器可读的运行汇总，供启动器或外部监控读取。
 function writeRunSummaryFile(summaryPayload) {
     const configuredPath = String(process.env[RUN_SUMMARY_PATH_ENV] || '').trim();
     if (!configuredPath) {
@@ -387,6 +426,7 @@ function writeRunSummaryFile(summaryPayload) {
     }
 }
 
+// xlsx 单元格统一以 trim 后字符串读取。
 function getCellText(sheet, rowIndex, colIndex) {
     const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
     const cell = sheet[address];
@@ -396,11 +436,13 @@ function getCellText(sheet, rowIndex, colIndex) {
     return String(cell.v).trim();
 }
 
+// xlsx 单元格统一以字符串写入，避免数字/公式类型影响后续读取。
 function setCellText(sheet, rowIndex, colIndex, text) {
     const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
     sheet[address] = { t: 's', v: String(text || '') };
 }
 
+// Excel 状态管理器：直接把 status/progress_step 回写到工作簿。
 function createExcelStatusManager({
     filePath,
     workbook,
@@ -490,6 +532,7 @@ function createExcelStatusManager({
     };
 }
 
+// CSV 状态管理器：原始 CSV 不回写，状态落在 csv-state JSON。
 function createCsvStatusManager({
     stateFilePath,
     sourceFilePath,
@@ -605,6 +648,7 @@ function createCsvStatusManager({
     };
 }
 
+// 空状态管理器主要用于测试或临时运行，不做持久化。
 function createNoopStatusManager() {
     return {
         saveWorkbook() { },
@@ -633,6 +677,7 @@ function createNoopStatusManager() {
     };
 }
 
+// 加载任务表并补齐状态列；同时完成应用名、包名的基础校验。
 function loadTasksFromExcel(filePath, sourceFilePath = filePath) {
     const workbook = XLSX.readFile(filePath);
     const firstSheetName = workbook.SheetNames[0];
@@ -798,6 +843,7 @@ function formatDuration(totalSeconds) {
     ].join('').trim() || '0s';
 }
 
+// 手动登录等待时间：给 Google 账号选择、二次验证或 Play Console 跳转留出窗口。
 function getManualLoginWaitMs() {
     const raw = String(process.env[LOGIN_WAIT_SECONDS_ENV] || '').trim();
     if (!raw) {
@@ -816,10 +862,12 @@ function getManualLoginWaitMs() {
     return Math.round(parsed * 1000);
 }
 
+// Playwright 页面等待统一入口，便于后续替换为条件式等待。
 async function delay(page, ms = DELAY) {
     await page.waitForTimeout(ms);
 }
 
+// 为批量运行加入轻微随机性，降低固定节奏导致页面状态未稳定的问题。
 function randomInt(min, max) {
     const lo = Math.min(min, max);
     const hi = Math.max(min, max);
@@ -830,6 +878,7 @@ async function randomDelay(page, minMs, maxMs) {
     await delay(page, randomInt(minMs, maxMs));
 }
 
+// 等待按钮从 disabled 变可用，常用于 Play Console 保存/下一步按钮。
 async function waitForEnabled(locator, timeoutMs = 15000) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
@@ -841,7 +890,7 @@ async function waitForEnabled(locator, timeoutMs = 15000) {
     return false;
 }
 
-// Global retry wrapper for UI interactions.
+// CDP 端点可由环境变量覆盖；默认优先 IPv4，避免 localhost 解析到 ::1 连接失败。
 function getCdpEndpoints() {
     const configured = String(process.env[CDP_ENDPOINT_ENV] || '').trim();
     if (configured) {
@@ -851,11 +900,13 @@ function getCdpEndpoints() {
     return ['http://127.0.0.1:9222', 'http://localhost:9222'];
 }
 
+// CDP 连接失败属于整批运行环境问题，遇到后不应继续盲跑下一条。
 function isCdpConnectionError(err) {
     const message = String((err && err.message) || '');
     return /connectOverCDP|ECONNREFUSED|9222|CDP/i.test(message);
 }
 
+// 连接用户已经打开的 Chrome，而不是启动新的无状态浏览器。
 async function connectBrowserOverCdp() {
     const endpoints = getCdpEndpoints();
     let lastError;
@@ -879,6 +930,7 @@ async function connectBrowserOverCdp() {
     );
 }
 
+// 最大化窗口可减少响应式布局导致的按钮不可见或左侧导航折叠问题。
 async function ensureBrowserWindowMaximized(page) {
     try {
         const cdpSession = await page.context().newCDPSession(page);
@@ -905,6 +957,7 @@ async function ensureBrowserWindowMaximized(page) {
     }
 }
 
+// UI 操作通用重试：页面偶发慢、点击被吞时先重试，再把最终错误交给上层处理。
 async function retryAction(action, label = 'action', retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
@@ -917,6 +970,7 @@ async function retryAction(action, label = 'action', retries = 3) {
     }
 }
 
+// 点击兜底顺序：普通点击 -> force 点击 -> DOM click/MouseEvent。
 async function clickLocatorRobust(locator, label = 'element', timeoutMs = 10000) {
     await locator.waitFor({ state: 'visible', timeout: timeoutMs });
     await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
@@ -949,6 +1003,7 @@ async function clickLocatorRobust(locator, label = 'element', timeoutMs = 10000)
     }
 }
 
+// Material/Ant/原生按钮的 disabled 状态不完全统一，统一用这个函数判断。
 async function isLocatorDisabled(locator) {
     const visible = await locator.isVisible().catch(() => false);
     if (!visible) return true;
@@ -959,6 +1014,7 @@ async function isLocatorDisabled(locator) {
     }).catch(() => true);
 }
 
+// 保存后只宽松等待 saved 文案；某些页面保存成功但提示不出现，所以这里不抛错。
 async function waitSaved(page) {
     console.log('Waiting for save confirmation...');
     // Loosely match various "saved" messages (case-insensitive).
@@ -971,6 +1027,7 @@ async function waitSaved(page) {
     await delay(page, 5000); // Extra wait after save to allow backend processing.
 }
 
+// 启动器传入的必要字段统一校验，缺失时给用户可理解的字段名。
 function getRequiredEnvValue(envName, displayLabel) {
     const value = String(process.env[envName] || '').trim();
     if (!value) {
@@ -982,6 +1039,7 @@ function getRequiredEnvValue(envName, displayLabel) {
     return value;
 }
 
+// AppGenie 登录和联系邮箱来自启动器表单。
 function getRuntimeOptions() {
     const webUsername = getRequiredEnvValue(WEB_USERNAME_ENV, 'web_username');
     const webPassword = getRequiredEnvValue(WEB_PASSWORD_ENV, 'web_password');
@@ -998,6 +1056,7 @@ function getRuntimeOptions() {
     };
 }
 
+// 多标签环境下挑一个最像 Play Console 工作页的标签复用。
 function scoreConsolePageForReuse(url, appListUrl) {
     const currentUrl = String(url || '');
     if (!currentUrl) return -1;
@@ -1019,6 +1078,7 @@ function scoreConsolePageForReuse(url, appListUrl) {
     return -1;
 }
 
+// 获取 Play Console 工作页；没有可复用标签时创建新标签。
 async function acquireWorkingConsolePage(context, appListUrl) {
     const pages = context.pages().filter(p => !p.isClosed());
     let bestPage = null;
@@ -1040,6 +1100,7 @@ async function acquireWorkingConsolePage(context, appListUrl) {
     return { page: newPage, source: 'created-new' };
 }
 
+// 生成 Google Sites 地址 slug：只保留英文数字并加随机数字，降低重名概率。
 function buildSiteSlug(appName) {
     const base = String(appName || '')
         .replace(/[^A-Za-z0-9]+/g, '')
@@ -1055,10 +1116,12 @@ function buildSiteSlug(appName) {
     return candidate.slice(0, 31);
 }
 
+// 组装正则前转义用户/页面文本。
 function escapeRegExp(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// 文件名安全化，避免 Windows 路径中出现非法字符。
 function safeFileToken(value) {
     return String(value || 'app')
         .replace(/[^A-Za-z0-9._-]+/g, '_')
@@ -1066,10 +1129,12 @@ function safeFileToken(value) {
         .slice(0, 80) || 'app';
 }
 
+// PowerShell 单引号字符串转义，用于 Expand-Archive 命令。
 function escapePowerShellSingleQuotedString(value) {
     return String(value || '').replace(/'/g, "''");
 }
 
+// Windows 下用系统 PowerShell 解压 AppGenie 下载的素材 ZIP。
 function extractZipToDirectory(zipPath, outputDir) {
     fs.rmSync(outputDir, { recursive: true, force: true });
     fs.mkdirSync(outputDir, { recursive: true });
@@ -1085,6 +1150,7 @@ function extractZipToDirectory(zipPath, outputDir) {
     );
 }
 
+// 递归收集素材文件，后续按固定文件名挑图。
 function collectFilesRecursive(rootDir) {
     const files = [];
     const walk = (dir) => {
@@ -1104,6 +1170,7 @@ function collectFilesRecursive(rootDir) {
     return files;
 }
 
+// AAB 下载兜底扫描浏览器默认下载目录。
 function getDefaultDownloadDirectories() {
     const candidates = [
         process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'Downloads') : '',
@@ -1120,6 +1187,7 @@ function getDefaultDownloadDirectories() {
         });
 }
 
+// 从下载目录找最近完成的 AAB 文件，并优先匹配包名 token。
 function findRecentAabDownloads(downloadDirs, startedAtMs, expectedToken) {
     const token = String(expectedToken || '').toLowerCase();
     const earliestMtimeMs = Number(startedAtMs || 0) - 5000;
@@ -1163,6 +1231,7 @@ function findRecentAabDownloads(downloadDirs, startedAtMs, expectedToken) {
     return candidates;
 }
 
+// 检测 Chrome 临时下载文件，避免把未下载完的 AAB 当成完成文件。
 function hasActiveChromePartialDownload(downloadDirs, startedAtMs, expectedToken) {
     const token = String(expectedToken || '').toLowerCase();
     const earliestMtimeMs = Number(startedAtMs || 0) - 5000;
@@ -1195,6 +1264,7 @@ function hasActiveChromePartialDownload(downloadDirs, startedAtMs, expectedToken
     return false;
 }
 
+// 如果 Playwright download 事件没捕获到，就从磁盘下载目录等 AAB 稳定完成。
 async function waitForRecentAabDownloadFromDisk({
     startedAtMs,
     expectedPackageName,
@@ -1240,6 +1310,7 @@ async function waitForRecentAabDownloadFromDisk({
     throw error;
 }
 
+// 从素材 ZIP 里按约定文件名取截图：1/2/3 等。
 function findImagesNamed(rootDir, names = ['1', '2', '3']) {
     const files = collectFilesRecursive(rootDir);
     const imageExts = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -1255,6 +1326,7 @@ function findImagesNamed(rootDir, names = ['1', '2', '3']) {
     });
 }
 
+// AppGenie 卡片文本归一化，用于描述和类型读取。
 function normalizeAppGenieCardText(value) {
     return String(value || '')
         .replace(/\r\n/g, '\n')
@@ -1262,6 +1334,7 @@ function normalizeAppGenieCardText(value) {
         .trim();
 }
 
+// Play Store 短描述保存时尾部需要保留空格，避免某些输入框最后一个词未触发变更。
 function ensureTrailingSpace(value) {
     const text = normalizeAppGenieCardText(value);
     return text.endsWith(' ') ? text : `${text} `;
@@ -1276,6 +1349,7 @@ function ensureTrailingSpaceWithinLimit(value, maxLength) {
     return ensureTrailingSpace(text).slice(0, hardLimit);
 }
 
+// 短描述超长时做保守压缩，优先替换冗词，再按词边界截断。
 function shortenShortDescription(raw, maxLength = 80) {
     let text = normalizeAppGenieCardText(raw).replace(/\s+/g, ' ');
     if (text.length <= maxLength - 1) {
@@ -1318,6 +1392,7 @@ function shortenShortDescription(raw, maxLength = 80) {
     return ensureTrailingSpaceWithinLimit(cut, maxLength);
 }
 
+// 获取或创建辅助页，例如 AppGenie；可复用已有标签减少重复登录。
 async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
     const pages = context.pages().filter(p => !p.isClosed());
     const reused = pages.find(p => matcher.test(String(p.url() || '')));
@@ -1333,6 +1408,7 @@ async function acquireOrCreateAuxPage(context, matcher, urlToOpen, label) {
     return { page: created, source: `created-${label}` };
 }
 
+// 创建全新的辅助页，例如每次生成 Google Sites 都需要干净页面。
 async function createFreshAuxPage(context, urlToOpen, label) {
     const created = await context.newPage();
     await created.bringToFront().catch(() => { });
@@ -1341,6 +1417,7 @@ async function createFreshAuxPage(context, urlToOpen, label) {
     return { page: created, source: `created-fresh-${label}` };
 }
 
+// 每条任务前后清理 AppGenie、Sites 等辅助标签，保留 Play Console 主标签。
 async function closeAutomationAuxiliaryPages(context, keepPage = null, label = 'cleanup') {
     if (!context) {
         return;
@@ -1373,6 +1450,7 @@ async function closeAutomationAuxiliaryPages(context, keepPage = null, label = '
     }
 }
 
+// 清理本批任务下载的临时素材，避免长批次磁盘和文件名污染。
 function cleanupTempDownloadRoot() {
     const tempDownloadRoot = buildTempDownloadRoot(os.tmpdir());
     if (!fs.existsSync(tempDownloadRoot)) {
@@ -1387,6 +1465,7 @@ function cleanupTempDownloadRoot() {
     }
 }
 
+// AppGenie 登录态检查与自动登录；登录失败会阻断当前任务。
 async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
     const isLoggedIn = async () => {
         const currentUrl = String(appGeniePage.url() || '');
@@ -1460,6 +1539,7 @@ async function ensureAppGenieLoggedIn(appGeniePage, runtimeOptions) {
     throw new Error('AppGenie did not reach logged-in state yet.');
 }
 
+// 确保 AppGenie 位于“我的任务”页面，后续按邮箱和包名找任务。
 async function ensureAppGenieOnMyTasks(appGeniePage) {
     const currentUrl = String(appGeniePage.url() || '');
     if (/\/my-submit-tasks(?:[/?#]|$)/i.test(currentUrl)) {
@@ -1489,6 +1569,7 @@ async function ensureAppGenieOnMyTasks(appGeniePage) {
     }, 'Wait AppGenie 我的任务 page', 4);
 }
 
+// AppGenie 类型标签归一化为 Play Console 的 App/Game 分支。
 function normalizeAppGenieTypeKey(typeLabel) {
     const raw = String(typeLabel || '').trim();
     if (!raw) {
@@ -1503,6 +1584,7 @@ function normalizeAppGenieTypeKey(typeLabel) {
     return '';
 }
 
+// 从 AppGenie 应用卡片读取类型标签，供 Store settings 设置分类使用。
 async function readAppGenieTypeFromCard(appCard) {
     const typeLabel = await appCard.evaluate((card) => {
         const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -1537,6 +1619,7 @@ async function readAppGenieTypeFromCard(appCard) {
     return String(typeLabel || '').trim();
 }
 
+// 打开 AppGenie 详情页，读取隐私政策文本，并记录素材下载要复用的详情页。
 async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions) {
     const { page: appGeniePage, source } = await acquireOrCreateAuxPage(
         context,
@@ -1683,6 +1766,7 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     return privacyText;
 }
 
+// 在 Google Sites 创建隐私政策站点，发布后返回可预测的公开 URL。
 async function createAndPublishGoogleSite(context, task, privacyText) {
     const { page: sitesPage, source } = await createFreshAuxPage(
         context,
@@ -1802,7 +1886,8 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     const publishDialog = sitesPage.locator('div[role="dialog"], div[aria-modal="true"]')
         .filter({ hasText: /Publish to the web|Web address|发布/i })
         .first();
-    await publishDialog.waitFor({ state: 'visible', timeout: 60000 });
+    // Google Sites 发布弹窗偶发加载较慢，这里放宽到 90 秒再判定超时。
+    await publishDialog.waitFor({ state: 'visible', timeout: 90000 });
 
     const addressInput = publishDialog.locator(
         'div[jsname="YEWROd"] input.poFWNe[jsname="YPqjbf"], input.poFWNe[jsname="YPqjbf"][maxlength="31"], input.poFWNe[maxlength="31"]'
@@ -1890,6 +1975,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return baseMatch[1];
         };
 
+        // 当前任务收尾或异常时清理辅助标签页，保留主 Play Console 页用于下一条任务。
         async function closeOtherTabsAfterTaskDone() {
             const contextToClean = page && !page.isClosed()
                 ? page.context()
@@ -1901,9 +1987,11 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         }
 
         const manualLoginWaitMs = getManualLoginWaitMs();
+        // 打开 Play Console app-list；如果遇到登录页，就等待用户手动完成登录/选账号。
         const openAppListPage = async () => {
             const createBtn = page.locator('[debug-id="create-app-button"], a:has-text("Create app"), button:has-text("Create app")').first();
 
+            // 某些账号会先进入开发者选择器，检测到后点第一个开发者项。
             const ensureDeveloperSelectedIfNeeded = async () => {
                 const devItem = page.locator('developer-item, [debug-id="all-developers"]').first();
                 if (await devItem.isVisible().catch(() => false)) {
@@ -1913,6 +2001,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }
             };
 
+            // 用 URL、输入框和登录文案综合判断当前是否还在 Google 登录流程。
             const isLikelyGoogleLoginPage = async () => {
                 const currentUrl = page.url();
                 if (/accounts\.google\.com|ServiceLogin|signin\/v2|identifier/i.test(currentUrl)) {
@@ -1932,6 +2021,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 return await loginTexts.isVisible().catch(() => false);
             };
 
+            // 登录等待循环：定期打印剩余时间，并在回到 Console 非 app-list 时重定向。
             const waitForManualLoginUntilAppListReady = async () => {
                 const startMs = Date.now();
                 let lastProgressLogAt = 0;
@@ -2015,6 +2105,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             '[debug-id="app-package-name-input"] input, input[aria-label="App package name"]'
         ).first();
 
+        // Create app 按钮偶发点击无响应，这里重新打开 app-list 后多次尝试。
         const openCreateFormWithRetry = async () => {
             const maxAttempts = 4;
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -2054,6 +2145,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             );
         };
 
+        // 读取创建应用表单中的默认语言，用于判断是否需要从 en-GB 切回 en-US。
         const readCreateAppLanguageText = async () => {
             const dropdown = page.locator(CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR).first();
             const buttonText = await dropdown.locator('.button-text').first().innerText().catch(() => '');
@@ -2061,6 +2153,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return String(`${buttonText} ${ariaText}`).replace(/\s+/g, ' ').trim();
         };
 
+        // 创建阶段强制默认语言为 en-US，避免商店列表默认语言被账号环境带偏。
         const ensureCreateAppDefaultLanguageEnUs = async () => {
             await retryAction(async () => {
                 const dropdown = page.locator(CREATE_APP_LANGUAGE_DROPDOWN_SELECTOR).first();
@@ -2335,6 +2428,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             statusManager.updateTaskStatus(task, STATUS_PARTIAL);
 
         // --- Helper functions inside this run ---
+        // 直接进入 App content overview，并优先切到 Need attention 标签。
         async function goToAppContent() {
             await page.goto(appBasePath + '/app-content/overview', { timeout: 90000, waitUntil: 'domcontentloaded' });
             await delay(page, 8000);
@@ -2345,6 +2439,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 通过左侧 Monitor and improve -> Policy and programs -> App content 进入，失败时回落到直达 URL。
         async function goToAppContentViaMonitorPolicyMenu() {
             const policyAndProgramsPattern = /Policy and program(?:mes|s)/i;
             const monitorAndImproveLink = page.locator(
@@ -2418,6 +2513,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 在 App content 列表中打开指定声明项。
         async function clickStartDeclaration(sectionTitle) {
             const buttonByAria = page.locator(
                 `button[aria-label="Start ${sectionTitle} declaration"], button[aria-label*="Start ${sectionTitle} declaration"]`
@@ -2439,6 +2535,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(page, 8000);
         }
 
+        // 按文案选择 radio，适用于 Play Console Material 组件。
         async function selectRadio(textRegex) {
             await retryAction(async () => {
                 const radio = page.locator('material-radio, [role="radio"]').filter({ hasText: textRegex }).first();
@@ -2448,6 +2545,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Select radio containing "${textRegex}"`);
         }
 
+        // 按文案勾选 checkbox，已勾选时不重复点击。
         async function selectCheckbox(textRegex) {
             await retryAction(async () => {
                 const checkbox = page.locator('material-checkbox, [role="checkbox"]').filter({ hasText: textRegex }).first();
@@ -2461,6 +2559,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Select checkbox containing "${textRegex}"`);
         }
 
+        // 点击当前页面主按钮，兼容 debug-id、button、role=button、material-button。
         async function clickMainButtonOn(targetPage, text) {
             console.log(`Looking for and clicking button: ${text}...`);
             await retryAction(async () => {
@@ -2498,6 +2597,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickMainButtonOn(page, text);
         }
 
+        // Save 主按钮找不到时，尝试右下角 More options -> Save。
         async function clickOverflowSaveFallback(contextLabel = 'Save') {
             console.log(`[SAVE] ${contextLabel}: trying More options -> Save fallback...`);
             await retryAction(async () => {
@@ -2533,6 +2633,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `${contextLabel} More options Save fallback`, 3);
         }
 
+        // 优先点主 Save，只有明确找不到 Save 主按钮时才走三点菜单兜底。
         async function clickSaveWithOverflowFallback(contextLabel = 'Save') {
             try {
                 await clickMainButton('Save');
@@ -2549,6 +2650,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickSaveWithOverflowFallback('Financial features');
         }
 
+        // 在多个候选选择器中找第一个可见输入框并填值。
         async function fillFirstVisibleInput(selectors, value, label) {
             await retryAction(async () => {
                 let target = null;
@@ -2572,6 +2674,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(page, ms);
         }
 
+        // 在指定页面对象上打开当前 app 的子路径，供主标签和临时标签共用。
         async function gotoAppSubPageOn(targetPage, subPath, label, waitMs = 3000) {
             console.log(`Navigating to "${label}"...`);
             await targetPage.bringToFront().catch(() => { });
@@ -2584,6 +2687,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await gotoAppSubPageOn(page, subPath, label, waitMs);
         }
 
+        // 兼容 fill 失败的输入框：fill 失败后用 DOM 赋值并派发 input/change。
         async function fillFirstVisibleInputOn(targetPage, selectors, value, label, waitMs = 3000) {
             await retryAction(async () => {
                 let target = null;
@@ -2622,6 +2726,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Fill ${label}`, 3);
         }
 
+        // 从一组 locator 中点击第一个可见元素。
         async function clickFirstVisibleOn(targetPage, locators, label, waitMs = 3000) {
             await retryAction(async () => {
                 let target = null;
@@ -2639,6 +2744,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Click ${label}`, 3);
         }
 
+        // 后续素材、描述、AAB 都依赖 AppGenie 详情页；丢失时重新打开详情。
         async function ensureAppGenieDetailPageReady() {
             if (task.appGenieDetailPage && !task.appGenieDetailPage.isClosed()) {
                 await task.appGenieDetailPage.bringToFront().catch(() => { });
@@ -2656,6 +2762,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return task.appGenieDetailPage;
         }
 
+        // 从 AppGenie 详情卡片读取指定字段，例如短描述、长描述。
         async function readAppGenieDetailCardText(titleRegex, label) {
             const detailPage = await ensureAppGenieDetailPageReady();
             let card = detailPage.locator('div.ant-card').filter({
@@ -2689,6 +2796,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return text;
         }
 
+        // 将 Playwright 捕获到的下载保存到当前任务临时目录。
         async function saveDownloadToTemp(download, folderLabel, fallbackName) {
             const root = path.join(
                 os.tmpdir(),
@@ -2703,6 +2811,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return { filePath, root };
         }
 
+        // 从 AppGenie 详情页点击指定下载按钮，并返回 download 对象。
         async function downloadFromAppGenieDetail(buttonRegex, label, skipRegex = null) {
             const detailPage = await ensureAppGenieDetailPageReady();
             const candidates = detailPage.locator('button, a, [role="button"]').filter({ hasText: buttonRegex });
@@ -2726,6 +2835,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return await downloadPromise;
         }
 
+        // 下载并解压商店素材 ZIP，按约定取 icon、feature graphic、手机截图。
         async function downloadAndExtractStoreImages() {
             const download = await downloadFromAppGenieDetail(/全部下载|Download\s*all|All\s*download/i, 'store images ZIP');
             const { filePath, root } = await saveDownloadToTemp(download, 'images', `${safeFileToken(task.appName)}-images.zip`);
@@ -2745,6 +2855,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return { appIcon, featureGraphic, phoneScreenshots };
         }
 
+        // 下载 AAB；如果 download 事件漏掉，则扫描浏览器下载目录兜底。
         async function downloadAabFromAppGenie() {
             const detailPage = await ensureAppGenieDetailPageReady();
             const candidates = detailPage.locator('button, a, [role="button"]').filter({
@@ -2795,6 +2906,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return fallbackPath;
         }
 
+        // 通用上传：优先用 filechooser，拿不到时寻找隐藏 input[type=file]。
         async function uploadFilesByUploadButton(targetPage, uploadButton, files, label) {
             await retryAction(async () => {
                 const chooserPromise = targetPage.waitForEvent('filechooser', { timeout: 30000 }).catch(() => null);
@@ -2826,6 +2938,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(targetPage, 3000);
         }
 
+        // 从选择器数组中点击第一个可见元素。
         async function clickFirstVisibleSelectorOn(targetPage, selectors, label, waitMs = 3000) {
             await retryAction(async () => {
                 let target = null;
@@ -2844,6 +2957,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, `Click ${label}`, 3);
         }
 
+        // 只查找不点击，供更复杂的条件判断复用。
         async function firstVisibleLocatorFromSelectors(targetPage, selectors) {
             for (const selector of selectors) {
                 const candidate = targetPage.locator(selector).first();
@@ -2854,6 +2968,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return null;
         }
 
+        // 在 Protected with Play 页面定位 Play Store protection 卡片。
         async function findVisiblePlayStoreProtectionCard() {
             for (const selector of APP_SIGNING_PLAY_STORE_PROTECTION_CARD_SELECTORS) {
                 const candidates = page.locator(selector);
@@ -2872,6 +2987,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return null;
         }
 
+        // 只在 Protect app signing key 行里找 Manage Play app signing，避免误点其他 Manage。
         async function findManagePlayAppSigningButton() {
             for (const selector of APP_SIGNING_MANAGE_BUTTON_SCOPED_SELECTORS) {
                 const candidate = page.locator(selector).first();
@@ -2913,6 +3029,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return null;
         }
 
+        // 判断 Manage 是否真的进入了 App signing 页面。
         async function isAppSigningPageVisible() {
             if (/app-signing/i.test(page.url())) {
                 return true;
@@ -2930,6 +3047,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return false;
         }
 
+        // Play Store protection 默认可能折叠，需要展开后才能看到 app signing 管理按钮。
         async function ensurePlayStoreProtectionDetailsExpanded() {
             const manageButton = await findManagePlayAppSigningButton();
             if (manageButton) return;
@@ -2968,6 +3086,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Expand Play Store protection details', 3);
         }
 
+        // 输入框快速填值并校验；fill 不生效时依次尝试键盘和逐字输入。
         async function fillInputFastWithFallback(targetPage, inputLocator, value, label) {
             await inputLocator.waitFor({ state: 'visible', timeout: 30000 });
             await inputLocator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
@@ -2999,6 +3118,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 从 Play App signing 页面读取 SHA-1，优先解析页面文本，失败时尝试复制按钮/剪贴板。
         async function readAppSigningSha1Fingerprint() {
             console.log('[REVIEW_UPLOAD] Opening Protected with Play...');
             await gotoAppSubPage(PLAY_PROTECTED_WITH_PLAY_PATH, 'Protected with Play', 5000);
@@ -3077,6 +3197,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return sha1;
         }
 
+        // 打开 Latest releases and bundles 并保存整页截图，作为 AppGenie 提审材料。
         async function captureLatestReleasesScreenshot() {
             console.log('[REVIEW_UPLOAD] Opening Latest releases and bundles for screenshot...');
             await gotoAppSubPage(PLAY_RELEASES_OVERVIEW_PATH, 'Latest releases and bundles', 5000);
@@ -3098,6 +3219,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return screenshotPath;
         }
 
+        // 打开 AppGenie 待提审任务页，并展开包含当前包名的任务列表。
         async function ensureAppGenieReviewTaskListPage() {
             const { page: appGeniePage, source } = await acquireOrCreateAuxPage(
                 context,
@@ -3123,6 +3245,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return appGeniePage;
         }
 
+        // 如果当前页面还没显示包名，就按邮箱找到任务行并打开抽屉。
         async function openAppGeniePendingDrawerIfNeeded(appGeniePage) {
             const packageVisible = await appGeniePage.locator(`text=${task.packageName}`).first().isVisible().catch(() => false);
             if (packageVisible) {
@@ -3160,6 +3283,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(appGeniePage, 3000, 6000);
         }
 
+        // 在 AppGenie 待提审列表中按包名定位具体应用卡片。
         async function findAppGenieReviewCardByPackage(appGeniePage) {
             const packageText = task.packageName;
             await retryAction(async () => {
@@ -3177,6 +3301,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return card;
         }
 
+        // 打开 AppGenie 的“提交审核”弹窗。
         async function openAppGenieReviewSubmitDialog(appGeniePage) {
             console.log('[REVIEW_UPLOAD] Opening AppGenie submit review dialog...');
             const appCard = await findAppGenieReviewCardByPackage(appGeniePage);
@@ -3194,6 +3319,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return modal;
         }
 
+        // 上传审核截图、填写 SHA-1 并提交 AppGenie 审核材料。
         async function submitAppGenieReviewUpload(screenshotPath, sha1Fingerprint) {
             const appGeniePage = await ensureAppGenieReviewTaskListPage();
             const modal = await openAppGenieReviewSubmitDialog(appGeniePage);
@@ -3204,7 +3330,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await fileInput.waitFor({ state: 'attached', timeout: 30000 });
                 await fileInput.setInputFiles(screenshotPath, { timeout: 30000 });
             }, 'Upload AppGenie review screenshot', 3);
-            await delay(appGeniePage, 3000);
+            // AppGenie 截图上传后给页面更多处理时间，降低未处理完就提交的概率。
+            await delay(appGeniePage, 5000);
 
             console.log('[REVIEW_UPLOAD] Filling SHA-1 in AppGenie...');
             await retryAction(async () => {
@@ -3248,6 +3375,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(appGeniePage, 3000);
         }
 
+        // 发布后的后置步骤：SHA-1 + Latest releases 截图 + AppGenie 回传。
         async function runReviewScreenshotUploadStep() {
             console.log('Executing post-release step: Review screenshot upload...');
             const sha1Fingerprint = await readAppSigningSha1Fingerprint();
@@ -3256,6 +3384,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_REVIEW_UPLOAD_DONE);
         }
 
+        // 上传面板中素材默认已选中时，直接点 Add 加入商店列表。
         async function addSelectedStoreAssetsToListing(label) {
             console.log(`[STORE LISTING] Adding selected ${label} assets to listing...`);
             await retryAction(async () => {
@@ -3272,6 +3401,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log(`[STORE LISTING] Selected ${label} assets added.`);
         }
 
+        // Add 按钮置灰时，按文件名手动选中刚上传的素材。
         async function selectStoreAssetsByFileNames(files, label) {
             for (const file of files) {
                 const fileName = path.basename(file);
@@ -3287,6 +3417,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 加入素材的加强版：必要时先按文件名选择，再点 Add。
         async function addSelectedStoreAssetsToListingWithFallback(label, files) {
             console.log(`[STORE LISTING] Adding selected ${label} assets to listing...`);
             await retryAction(async () => {
@@ -3307,6 +3438,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log(`[STORE LISTING] Selected ${label} assets added.`);
         }
 
+        // 打开商店列表某个图片区块的 Add assets 面板。
         async function openStoreListingAssetPanel(sectionLabel, uploaderDebugId, label) {
             const sectionByAria = page.locator(`div[role="group"][aria-label="${sectionLabel}"]`).first();
             const sectionByText = page.locator(
@@ -3340,6 +3472,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
         }
 
+        // 上传图标、Feature graphic 或手机截图，并加入对应素材区。
         async function uploadStoreListingGraphicAsset(sectionLabel, uploaderDebugId, files, label) {
             const fileList = Array.isArray(files) ? files : [files];
             if (!fileList.length || fileList.some(file => !file || !fs.existsSync(file))) {
@@ -3360,6 +3493,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
         }
 
+        // Store settings/listing 里按区块标题点击 Edit，找不到时用全局 Edit 按钮兜底。
         async function clickStoreSectionEdit(sectionTitleRegex, label, fallbackMode = 'first', targetPage = page) {
             const sectionEdit = targetPage.locator('console-section, console-block-1-column, console-form-row, section').filter({
                 hasText: sectionTitleRegex
@@ -3371,12 +3505,14 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await clickFirstVisibleOn(targetPage, [sectionEdit, fallback], `${label} Edit`, 3000);
         }
 
+        // Store listing contact details 弹窗定位器。
         function storeListingContactDialogLocator() {
             return page.locator(
                 'div[role="dialog"], material-dialog, .mdc-dialog, .mat-mdc-dialog-container, .cdk-overlay-pane'
             ).filter({ hasText: /Store\s*listing\s*contact\s*details/i }).first();
         }
 
+        // 确保联系信息弹窗已经打开。
         async function ensureStoreListingContactDialogOpen() {
             const dialog = storeListingContactDialogLocator();
             if (await dialog.isVisible().catch(() => false)) {
@@ -3389,6 +3525,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return dialog;
         }
 
+        // 填写商店联系邮箱，并校验输入框实际值。
         async function fillStoreListingContactEmail(email) {
             await retryAction(async () => {
                 const dialog = await ensureStoreListingContactDialogOpen();
@@ -3416,6 +3553,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Fill Store listing contact email', 3);
         }
 
+        // 点击联系信息弹窗内的 Save，避免误点页面外层按钮。
         async function clickStoreListingContactSave() {
             await retryAction(async () => {
                 const dialog = await ensureStoreListingContactDialogOpen();
@@ -3448,6 +3586,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Click Store listing contact details Save', 3);
         }
 
+        // 保存后如果弹窗还在，尝试关闭，避免遮挡后续 Store listing 操作。
         async function closeStoreListingContactDialogIfVisible() {
             const dialog = storeListingContactDialogLocator();
             if (!(await dialog.isVisible().catch(() => false))) {
@@ -3473,6 +3612,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             console.log('[STORE SETTINGS] Store listing contact details dialog closed.');
         }
 
+        // 关闭右侧抽屉/编辑面板，给下一步留下干净页面状态。
         async function closePanelIfVisible(targetPage = page) {
             const closeBtn = targetPage.locator(
                 'button[aria-label="Close"], material-button[aria-label="Close"], .close-icon-button, button:has-text("Close")'
@@ -3483,6 +3623,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 按 debug-id 打开下拉并选择匹配项，主要用于 App/Game 和分类。
         async function selectDropdownByDebugId(debugId, optionRegex, label, targetPage = page) {
             const dropdown = targetPage.locator(
                 `material-dropdown-select[debug-id="${debugId}"] dropdown-button, ` +
@@ -3510,6 +3651,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await delay(targetPage, 3000);
         }
 
+        // 根据 AppGenie 类型设置 Play Console 的 App/Game 和分类。
         async function setStoreCategoryFromAppGenieType(preOpenedPage = null) {
             const typeKey = task.appGenieTypeKey || normalizeAppGenieTypeKey(task.appGenieTypeLabel);
             const isGame = typeKey === 'game';
@@ -3557,6 +3699,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // Store settings 大步骤：目前主要维护商店联系邮箱。
         async function runStoreSettingsStep() {
             console.log('Executing item 11/13: Store settings...');
             await gotoAppSubPage('/store-settings', 'Store settings');
@@ -3570,6 +3713,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_STORE_SETTINGS_DONE);
         }
 
+        // Store listing 大步骤：填写描述，上传图标、Feature graphic 和截图。
         async function runStoreListingStep() {
             console.log('Executing item 12/13: Store listing...');
             await gotoAppSubPage('/store-listings', 'Store listings');
@@ -3645,6 +3789,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_STORE_LISTING_DONE);
         }
 
+        // 等 AAB 上传列表出现目标文件并显示可移除按钮，代表上传处理基本完成。
         async function waitForAabUploadReady(aabPath, timeoutMs = 300000) {
             const aabFileName = path.basename(aabPath);
             console.log(`[RELEASE] Waiting for uploaded AAB file item: ${aabFileName}`);
@@ -3671,6 +3816,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             throw error;
         }
 
+        // 打开 Production release 创建/编辑页，返回 AAB 上传按钮。
         async function openProductionReleaseEditor() {
             const uploadButton = page.locator(
                 'button:has-text("Upload"), [role="button"]:has-text("Upload"), material-button:has-text("Upload")'
@@ -3709,6 +3855,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return uploadButton;
         }
 
+        // AAB 上传期间另开同 release URL 标签，后续用于并行设置 Store settings 分类。
         async function openSameProductionReleaseTab(releaseUrl) {
             console.log('[RELEASE] Opening same Production release page in a temporary tab before AAB upload...');
             const releaseMirrorPage = await context.newPage();
@@ -3727,6 +3874,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 在 release review 页识别阻塞错误；AD_ID 错误会交给自动修复流程。
         async function detectReleaseNeedFixReason() {
             const problemStatus = page.locator('status-text').filter({
                 hasText: /We found some problems with your release/i
@@ -3763,6 +3911,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return 'We found some problems with your release / Errors, warnings and messages';
         }
 
+        // 把需要人工处理的 release 问题标记成 NEED_FIX 异常。
         function createReleaseNeedFixError(reason) {
             const error = new Error(reason || 'Release needs manual fixes before it can be saved.');
             error.code = 'RELEASE_NEED_FIX';
@@ -3770,6 +3919,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return error;
         }
 
+        // AD_ID 声明页里的“Turn off release errors”确认框。
         async function ensureAdIdReleaseErrorsAcknowledged() {
             await retryAction(async () => {
                 const ackCheckbox = page.locator(AD_ID_ACK_CHECKBOX_SELECTOR).first();
@@ -3798,6 +3948,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Check AD_ID turn off release errors acknowledgement', 4);
         }
 
+        // AD_ID 修复后回到同一个 Production draft，不重新上传 AAB。
         async function reopenProductionDraftReleaseForReview() {
             console.log('[RELEASE] Returning to Production draft release after AD_ID fix...');
             await gotoAppSubPage('/tracks/production', 'Production', 5000);
@@ -3815,6 +3966,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
         }
 
+        // 自动处理 AAB 无 AD_ID 权限但声明使用 Advertising ID 的 release error。
         async function resolveAdIdReleasePermissionError() {
             console.log('[RELEASE] AD_ID permission release error detected; updating declaration...');
             await clickFirstVisibleSelectorOn(page, RELEASE_UPDATE_DECLARATION_SELECTORS, 'Update declaration button', 5000);
@@ -3842,6 +3994,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        // 可自动修复的 release error 在这里处理；其他阻塞错误转 NEED_FIX。
         async function handleReleaseNeedFixOrThrow(reason, sourceLabel) {
             console.log(`[RELEASE] Need manual fix detected${sourceLabel ? ` ${sourceLabel}` : ''}: ${reason}`);
             if (isAdIdReleasePermissionError(reason)) {
@@ -3853,6 +4006,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             throw createReleaseNeedFixError(reason);
         }
 
+        // Publishing overview 中发送所有待发布变更进入审核。
         async function sendChangesForReview() {
             console.log('[RELEASE] Opening Publishing overview...');
             await page.bringToFront().catch(() => { });
@@ -3911,6 +4065,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await randomDelay(page, 5000, 7000);
         }
 
+        // Production release 大步骤：下载 AAB、上传、保存、发送审核。
         async function runReleaseStep() {
             console.log('Executing item 13/13: Production release...');
             console.log('[RELEASE] Downloading AAB package...');
@@ -3989,6 +4144,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_RELEASE_DONE);
         }
 
+        // Privacy policy 大步骤：AppGenie 取文本，Google Sites 发布，回填 Play Console URL。
         async function runPrivacyPolicyStep() {
             await goToAppContentViaMonitorPolicyMenu();
             console.log('Executing declaration 8/13: Privacy policy...');
@@ -4014,6 +4170,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_PRIVACY_DONE);
         }
 
+        // 内容分级问卷里，每次选择第一个未回答组的 No。
         async function selectNoInFirstUncheckedRadioGroup() {
             const result = await page.evaluate(() => {
                 const groups = Array.from(document.querySelectorAll('material-radio-group'));
@@ -4059,6 +4216,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return result || { clicked: false, groupIndex: 0, totalGroups: 0 };
         }
 
+        // 统计内容分级问卷还剩多少未回答 radio group。
         async function getUncheckedRadioGroupCount() {
             const count = await page.evaluate(() => {
                 const groups = Array.from(document.querySelectorAll('material-radio-group'));
@@ -4074,6 +4232,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             return Number(count || 0);
         }
 
+        // Content ratings 大步骤：选择 All Other App Types，并把问卷统一回答 No。
         async function runContentRatingsStep() {
             await goToAppContent();
             console.log('Executing declaration 9/13: Content ratings...');
@@ -4234,11 +4393,13 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             markStepDone(PROGRESS_STEP_RATING_DONE);
         }
 
+        // Data safety 大步骤：按当前合规策略声明 Device or other IDs 的收集和用途。
         async function runDataSafetyStep() {
             await goToAppContent();
             console.log('Executing declaration 10/13: Data safety...');
             await clickStartDeclaration('Data safety');
 
+            // Data safety 按钮可用性判断，过滤掉可见但 disabled 的按钮。
             const isButtonEnabled = async (locator) => {
                 const visible = await locator.isVisible().catch(() => false);
                 if (!visible) return false;
@@ -4250,6 +4411,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 return !disabled;
             };
 
+            // 点击已经定位好的 Data safety 按钮，并统一打印日志。
             const clickScopedButton = async (locator, label) => {
                 await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => { });
                 await locator.click({ timeout: 10000 });
@@ -4262,6 +4424,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 .filter({ hasText: /^\s*Save\s*$/ })
                 .last();
 
+            // Next 按钮在页面上可能有多个候选，优先取底部可见的真实按钮。
             const getDataSafetyNextButton = async () => {
                 const primary = page.locator(DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR)
                     .filter({ hasText: /^\s*Next\s*$/ })
@@ -4297,6 +4460,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 return candidates.nth(selectedIndex);
             };
 
+            // Data safety 页面主 Save 按钮。
             const clickMainSaveButton = async (label) => {
                 const saveButton = getMainSaveButton();
                 await saveButton.waitFor({ state: 'visible', timeout: 15000 });
@@ -4305,6 +4469,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 3000);
             };
 
+            // 点击 Data safety 的 Next，并确保按钮可用。
             const clickDataSafetyNextButton = async (label = 'Next') => {
                 const nextButton = await getDataSafetyNextButton();
                 if (!nextButton) {
@@ -4319,6 +4484,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 3000);
             };
 
+            // 选择数据类型后 Next 可能延迟解锁，这里轮询等待。
             const waitForDataSafetyNextEnabled = async (timeoutMs = 5000) => {
                 const started = Date.now();
                 while (Date.now() - started < timeoutMs) {
@@ -4336,6 +4502,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 flags: regex.flags
             });
 
+            // 以下几个判断用于识别当前 Data safety 走到哪一页。
             const isDataCollectionSecurityStepVisible = async () => {
                 return await page.locator(DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR).first()
                     .isVisible()
@@ -4356,6 +4523,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 return await page.locator('text=/Store listing preview/i').first().isVisible().catch(() => false);
             };
 
+            // 按“问题文案 + 答案文案”选择 radio，适配 Material DOM 层级变化。
             const clickDataSafetyRadioAnswer = async (questionRegex, answerRegex, label) => {
                 await retryAction(async () => {
                     const result = await page.evaluate(({ question, answer }) => {
@@ -4476,6 +4644,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            // 按答案文案勾选 checkbox，优先关联 label/input，找不到再按最近位置匹配。
             const clickDataSafetyCheckbox = async (answerRegex, label) => {
                 await retryAction(async () => {
                     const result = await page.evaluate(({ answer }) => {
@@ -4561,6 +4730,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            // “不允许用户创建账号”选项会触发后续外部账号问题，必要时做二次点击。
             const selectNoInAppAccountCreation = async () => {
                 await retryAction(async () => {
                     const accountCreationGroup = page
@@ -4612,6 +4782,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            // 在指定 radio group 里选择答案，用于稳定 debug-id 的问题组。
             const clickDataSafetyRadioGroupAnswer = async (groupSelectors, answerRegex, label) => {
                 await retryAction(async () => {
                     const target = await page.evaluate((config) => {
@@ -4750,6 +4921,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            // 在弹窗/局部范围内勾选 checkbox，并可等待它触发的后续问题出现。
             const clickDataSafetyCheckboxInScope = async (scopeLocator, answerRegex, label, selector = '', revealsSelector = '') => {
                 await retryAction(async () => {
                     await scopeLocator.waitFor({ state: 'visible', timeout: 30000 });
@@ -4910,6 +5082,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            // 在弹窗/局部范围内选择 radio，优先按 groupSelector 限定问题组。
             const clickDataSafetyRadioInScope = async (scopeLocator, answerRegex, label, groupSelector = '') => {
                 await retryAction(async () => {
                     await scopeLocator.waitFor({ state: 'visible', timeout: 30000 });
@@ -5001,6 +5174,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 1500);
             };
 
+            // Data collection and security 页：Yes/Yes/无账号/外部登录 No/删除请求 No。
             const answerDataCollectionSecurityStep = async () => {
                 console.log('[DATA SAFETY] Answering Data collection and security questions...');
                 for (const action of DATA_SAFETY_COLLECTION_SECURITY_ACTIONS) {
@@ -5137,6 +5311,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 2000);
             };
 
+            // Data types 页：只展开并勾选 Device or other IDs。
             const selectDataSafetyDeviceIdsType = async () => {
                 console.log('[DATA SAFETY] Selecting Device or other IDs on Data types page...');
                 const action = DATA_SAFETY_DATA_TYPES_ACTIONS[0];
@@ -5189,6 +5364,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 }, 'Open Device or other IDs data type', 4);
                 await delay(page, 2000);
 
+                // 找 Device or other IDs checkbox 的可点击坐标和当前选中状态。
                 const findDeviceIdsCheckboxTarget = async () => {
                     return await page.evaluate(({ answerText }) => {
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -5265,6 +5441,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     }, { answerText: DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT });
                 };
 
+                // UI 已显示选中但 Next 未解锁时，手动派发 input/change 事件同步状态。
                 const dispatchDeviceIdsCheckboxEvents = async () => {
                     return await page.evaluate(({ answerText }) => {
                         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -5352,6 +5529,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 await delay(page, 2000);
             };
 
+            // Device or other IDs 弹窗：Collected、ephemeral、required、App functionality。
             const answerDataSafetyDeviceIdsUsage = async () => {
                 console.log('[DATA SAFETY] Answering Device or other IDs usage questions...');
                 const startAction = DATA_SAFETY_USAGE_ACTIONS.find(action => action.type === 'start');
@@ -5475,7 +5653,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             throw new Error('Data safety flow did not reach Save state.');
         }
 
-        // --- Execute declarations flow in strict one-pass mode ---
+        // --- 主执行顺序：当前仍是严格单向流程，不根据 progress_step 做真正断点跳转。 ---
         const markStepDone = (doneStep) => {
             statusManager.updateTaskProgress(task, doneStep);
         };
@@ -5489,9 +5667,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         markStepDone(PROGRESS_STEP_ADS_DONE);
 
         await goToAppContent();
-        console.log('Executing declaration 2/7: App access...');
-        await clickStartDeclaration('App access');
-        await selectRadio('All functionality in my app is available without any access restrictions');
+        console.log('Executing declaration 2/7: Sign in details...');
+        await clickStartDeclaration('Sign in details');
+        await selectRadio(/^No/);
         await clickMainButton('Save');
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_APP_ACCESS_DONE);
@@ -5564,7 +5742,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         await waitSaved(page);
         markStepDone(PROGRESS_STEP_HEALTH_DONE);
 
-            // 8-11. Release navigation (strict: must really enter target pages before continuing)
+            // 国家地区设置：必须确认真的进入目标页面后再继续，避免左侧导航点击被吞。
             const testAndReleaseUrl = `${appBasePath}/test-and-release`;
             const productionUrl = `${appBasePath}/tracks/production`;
             const productionCountryAvailabilityUrl = `${productionUrl}?tab=countryAvailability`;
@@ -5583,7 +5761,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 'button, [role="button"], a'
             ).filter({ hasText: addCountriesRegionsPattern }).first();
 
-            // 8. Test and release
+            // 进入 Test and release。
             console.log('Navigating to "Test and release"...');
             await retryAction(async () => {
                 const linkVisible = await testAndReleaseLink.isVisible().catch(() => false);
@@ -5600,7 +5778,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Open Test and release', 3);
             await delay(page, 5000);
 
-            // 9. Production
+            // 进入 Production。
             console.log('Navigating to "Production"...');
             await retryAction(async () => {
                 const linkVisible = await productionLink.isVisible().catch(() => false);
@@ -5621,7 +5799,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Open Production', 3);
             await delay(page, 3000);
 
-            // 10. Countries / regions tab (with direct URL fallback)
+            // 打开 Countries / regions；标签页不可见时用直达 URL 兜底。
             console.log('Opening "Countries / regions" tab...');
             await retryAction(async () => {
                 if (await addCountriesBtn.isVisible().catch(() => false)) {
@@ -5646,7 +5824,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Open Countries / regions tab', 3);
             await delay(page, 2000);
 
-            // 11. Add countries / regions
+            // 打开添加国家/地区弹窗。
             console.log('Clicking "Add countries / regions"...');
             await retryAction(async () => {
                 await addCountriesBtn.waitFor({ state: 'visible', timeout: 60000 });
@@ -5655,7 +5833,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Click Add countries / regions', 3);
             await delay(page, 5000);
 
-            // 12. Select all countries/regions (prefer direct "Select all rows" checkbox)
+            // 勾选全部国家/地区，优先使用新页面的 Select all rows checkbox。
             console.log('Selecting "Select all rows" checkbox...');
             const selectAllRowsCheckbox = page.locator(
                 'mat-checkbox[aria-label="Select all rows"][role="checkbox"], [role="checkbox"][aria-label="Select all rows"]'
@@ -5681,7 +5859,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     }
                 }
 
-                // Fallback: old row-based selectors if "Select all rows" is unavailable.
+                // 旧页面兜底：从表头行里寻找全选 checkbox。
                 await countryRegionHeaderRow.waitFor({ state: 'visible', timeout: 10000 });
                 await countryRegionHeaderRow.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
 
@@ -5704,11 +5882,11 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }, 'Ensure Select all rows checkbox checked', 2);
             await delay(page, 3000);
 
-            // 13. Save countries/regions selection
+            // 保存国家/地区选择。
             console.log('Saving countries/regions selection...');
             await clickMainButton('Save');
 
-            // 14. Verify success marker: Targeted (N)
+            // 验证 Targeted (N) 出现，确认国家地区保存完成。
             console.log('Verifying "Targeted (N)" appears...');
             const targetedBadge = page.locator('span.button-text, button, [role="button"]').filter({
                 hasText: /Targeted\s*\(\d+\)/i
@@ -5754,6 +5932,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
     }
 }
 
+// 程序入口：准备配置、读取任务、逐条执行，并在最后输出批次汇总。
 (async () => {
     const { inputFileArg } = parseCliArgs();
     const runtimeOptions = getRuntimeOptions();
@@ -5764,6 +5943,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         runtimeInput.runtimeWorkbookPath,
         runtimeInput.sourceFilePath
     );
+    // 当前版本会执行读取到的全部任务；后续如需跳过 DONE，应在这里筛选。
     const selectedTasks = tasks;
 
     console.log(`Developer console URL loaded from: ${configPath}`);
@@ -5779,6 +5959,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         return;
     }
 
+    // 批次统计只记录本次运行结果，不影响 Excel/CSV 中的持久状态。
     const runStats = {
         totalLoaded: tasks.length,
         planned: selectedTasks.length,
@@ -5788,6 +5969,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         failed: []
     };
 
+    // 单条失败不会阻断整批；只有 CDP 等环境级错误才会继续向外抛出。
     for (let i = 0; i < selectedTasks.length; i++) {
         const task = selectedTasks[i];
         console.log(
@@ -5808,6 +5990,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const isCreateFailedTimeout = errorCode === 'CREATE_FAILED_TIMEOUT';
             const isReleaseNeedFix = errorCode === 'RELEASE_NEED_FIX' || Boolean(e && e.needFix);
             if (isReleaseNeedFix) {
+                // Release 阶段识别到必须人工处理的问题时，标记 NEED_FIX 后继续下一条。
                 task.status = STATUS_NEED_FIX;
                 statusManager.updateTaskStatus(task, STATUS_NEED_FIX);
                 runStats.needFix.push({
@@ -5818,6 +6001,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 console.warn(`[NEED_FIX] Row ${task.rowNumber} (${task.appName}/${task.packageName}): ${e.message}`);
                 console.warn(`Iteration ${i + 1} needs manual fix; continuing to next row...`);
             } else {
+                // 普通异常标记 FAILED，并尽量继续后续任务。
                 task.status = STATUS_FAILED;
                 statusManager.updateTaskStatus(task, STATUS_FAILED);
 
@@ -5838,6 +6022,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     break;
                 }
                 if (isCdpConnectionError(e)) {
+                    // CDP 连接错误通常说明浏览器/端口环境失效，继续跑下一条也会失败。
                     throw e;
                 }
             }
@@ -5850,6 +6035,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         }
     }
 
+    // 控制台和可选 summary JSON 使用同一份汇总内容。
     const failedCount = runStats.failed.length;
     const needFixCount = runStats.needFix.length;
     const failedNames = runStats.failed.map(item => `${item.appName} (${item.packageName})`);
