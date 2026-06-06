@@ -39,6 +39,8 @@ const {
 // 清理相关逻辑：临时下载根目录和辅助标签页识别。
 const {
     buildTempDownloadRoot,
+    cleanupTrackedFallbackAabFiles,
+    shouldCleanupFallbackAabAfterRow,
     shouldCloseAuxiliaryPage
 } = require('./cleanup_helpers');
 // Google Sites 页面结构经常变化，删除 header 的选择器单独维护。
@@ -2903,6 +2905,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                 expectedPackageName: task.packageName,
                 timeoutMs: 300000
             });
+            if (Array.isArray(runtimeOptions.fallbackAabCleanupPaths)) {
+                runtimeOptions.fallbackAabCleanupPaths.push(fallbackPath);
+            }
             return fallbackPath;
         }
 
@@ -5968,6 +5973,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         needFix: [],
         failed: []
     };
+    const fallbackAabCleanupPaths = [];
+    runtimeOptions.fallbackAabCleanupPaths = fallbackAabCleanupPaths;
 
     // 单条失败不会阻断整批；只有 CDP 等环境级错误才会继续向外抛出。
     for (let i = 0; i < selectedTasks.length; i++) {
@@ -6026,6 +6033,17 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
                     throw e;
                 }
             }
+        }
+
+        // 每包固定 9 行数据；第 4 行结束后清理一次 Chrome Downloads 兜底 AAB，避免中途占用磁盘。
+        if (shouldCleanupFallbackAabAfterRow(i + 1)) {
+            console.log(`[CLEANUP] Running fallback AAB cleanup after ${i + 1} processed row(s)...`);
+            const cleanupResult = cleanupTrackedFallbackAabFiles(fallbackAabCleanupPaths);
+            fallbackAabCleanupPaths.length = 0;
+            console.log(
+                `[CLEANUP] Fallback AAB cleanup complete: ` +
+                `removed=${cleanupResult.removed}, failed=${cleanupResult.failed}, skipped=${cleanupResult.skipped}.`
+            );
         }
 
         if (i < selectedTasks.length - 1) {
