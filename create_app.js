@@ -6282,6 +6282,3 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
     process.exit(1);
 });
 
-
-
-
