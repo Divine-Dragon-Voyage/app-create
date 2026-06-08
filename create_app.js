@@ -4,8 +4,8 @@ const path = require('path');
  * 主脚本总览：
  * 1. 从 Excel/CSV 读取应用任务，并维护 status / progress_step。
  * 2. 通过 Chrome CDP 接管已登录浏览器，进入 Google Play Console 创建应用。
- * 3. 依次完成 App content、国家地区、隐私政策、内容分级、Data safety、商店资料、Production release。
- * 4. 发布后读取 SHA-1、截取 Latest releases 页面，并回传到 AppGenie 提交审核。
+ * 3. 本分支依次完成 App content 7 项、国家地区、Privacy policy、Content ratings、Data safety。
+ * 4. Store settings、Store listing、Production release、SHA-1/截图/AppGenie 回传不在本分支执行范围内。
  *
  * 维护提示：
  * - 本文件仍是主流程编排文件，页面选择器和复杂兜底逻辑尽量下沉到独立 flow 文件。
@@ -4166,7 +4166,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         // Privacy policy 大步骤：AppGenie 取文本，Google Sites 发布，回填 Play Console URL。
         async function runPrivacyPolicyStep() {
             await goToAppContentViaMonitorPolicyMenu();
-            console.log('Executing declaration 8/13: Privacy policy...');
+            console.log('Executing post-country item 1/3: Privacy policy...');
             await clickStartDeclaration('Privacy policy');
 
             const privacyText = await openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptions);
@@ -4254,7 +4254,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         // Content ratings 大步骤：选择 All Other App Types，并把问卷统一回答 No。
         async function runContentRatingsStep() {
             await goToAppContent();
-            console.log('Executing declaration 9/13: Content ratings...');
+            console.log('Executing post-country item 2/3: Content ratings...');
             await clickStartDeclaration('Content ratings');
 
             const startQuestionnaireBtn = page.locator(
@@ -4415,7 +4415,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         // Data safety 大步骤：按当前合规策略声明 Device or other IDs 的收集和用途。
         async function runDataSafetyStep() {
             await goToAppContent();
-            console.log('Executing declaration 10/13: Data safety...');
+            console.log('Executing post-country item 3/3: Data safety...');
             await clickStartDeclaration('Data safety');
 
             // Data safety 按钮可用性判断，过滤掉可见但 disabled 的按钮。
@@ -5919,10 +5919,6 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await runPrivacyPolicyStep();
             await runContentRatingsStep();
             await runDataSafetyStep();
-            await runStoreSettingsStep();
-            await runStoreListingStep();
-            await runReleaseStep();
-            await runReviewScreenshotUploadStep();
 
             statusManager.ensureTaskProgressAtLeast(task, PROGRESS_STEP_DONE);
             statusManager.updateTaskStatus(task, STATUS_DONE);

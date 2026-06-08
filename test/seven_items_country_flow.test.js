@@ -13,12 +13,16 @@ test('create flow keeps copied seven-items and country fallbacks only', () => {
     assert.match(script, /Production page loaded but Countries\/regions controls are not visible yet; continuing with fallback navigation/);
 });
 
-test('seven-items branch includes copied post-country ten-item flow', () => {
-    assert.match(script, /runPrivacyPolicyStep/);
-    assert.match(script, /runContentRatingsStep/);
-    assert.match(script, /runDataSafetyStep/);
-    assert.match(script, /runStoreSettingsStep/);
-    assert.match(script, /runStoreListingStep/);
-    assert.match(script, /runReleaseStep/);
-    assert.match(script, /runReviewScreenshotUploadStep/);
+test('seven-items branch stops after country plus three post-country items', () => {
+    assert.match(
+        script,
+        /await runPrivacyPolicyStep\(\);\s*await runContentRatingsStep\(\);\s*await runDataSafetyStep\(\);/
+    );
+    assert.match(script, /Executing post-country item 1\/3: Privacy policy/);
+    assert.match(script, /Executing post-country item 2\/3: Content ratings/);
+    assert.match(script, /Executing post-country item 3\/3: Data safety/);
+    assert.doesNotMatch(script, /await runStoreSettingsStep\(\);/);
+    assert.doesNotMatch(script, /await runStoreListingStep\(\);/);
+    assert.doesNotMatch(script, /await runReleaseStep\(\);/);
+    assert.doesNotMatch(script, /await runReviewScreenshotUploadStep\(\);/);
 });
