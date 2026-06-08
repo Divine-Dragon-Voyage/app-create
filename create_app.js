@@ -13,7 +13,7 @@ const path = require('path');
  */
 const crypto = require('crypto');
 const os = require('os');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 // Data safety 页面答案和稳定选择器集中在独立模块，避免主流程里散落大量常量。
@@ -102,6 +102,8 @@ const PACKAGE_NAME_HEADER_CANDIDATES = new Set([
 const PACKAGE_NAME_REGEX = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const CONFIG_DIR_ENV = 'APP_CREATE_CONFIG_DIR';
 const CDP_ENDPOINT_ENV = 'APP_CREATE_CDP_ENDPOINT';
+const CDP_BROWSER_PATH_ENV = 'APP_CREATE_BROWSER_PATH';
+const CDP_BROWSER_USER_DATA_DIR_ENV = 'APP_CREATE_BROWSER_USER_DATA_DIR';
 const LOGIN_WAIT_SECONDS_ENV = 'APP_CREATE_LOGIN_WAIT_SECONDS';
 const DEVELOPER_URL_ENV = 'APP_CREATE_DEVELOPER_URL';
 const DEVELOPER_ID_ENV = 'APP_CREATE_DEVELOPER_ID';
@@ -880,6 +882,10 @@ async function randomDelay(page, minMs, maxMs) {
     await delay(page, randomInt(minMs, maxMs));
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // 等待按钮从 disabled 变可用，常用于 Play Console 保存/下一步按钮。
 async function waitForEnabled(locator, timeoutMs = 15000) {
     const started = Date.now();
@@ -902,15 +908,147 @@ function getCdpEndpoints() {
     return ['http://127.0.0.1:9222', 'http://localhost:9222'];
 }
 
+function getPrimaryCdpJsonVersionUrl() {
+    return `${getCdpEndpoints()[0].replace(/\/+$/, '')}/json/version`;
+}
+
+function getCdpBrowserUserDataDir() {
+    const configured = String(process.env[CDP_BROWSER_USER_DATA_DIR_ENV] || '').trim();
+    return configured || 'C:\\chrome-cdp-app-create';
+}
+
+function getCdpBrowserPathCandidates() {
+    const configured = String(process.env[CDP_BROWSER_PATH_ENV] || '').trim();
+    return [
+        configured,
+        path.join(process.env.ProgramFiles || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env['ProgramFiles(x86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env.ProgramFiles || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+        path.join(process.env['ProgramFiles(x86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe')
+    ].filter(Boolean);
+}
+
+function resolveCdpBrowserPath() {
+    return getCdpBrowserPathCandidates().find(candidate => fs.existsSync(candidate)) || '';
+}
+
+async function waitForCdpEndpointHealth(url, timeoutMs = 45000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        try {
+            const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+            if (response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                if (payload && payload.webSocketDebuggerUrl) {
+                    return true;
+                }
+            }
+        } catch (_) {
+            // Retry until the debug browser finishes starting.
+        }
+        await sleep(1000);
+    }
+    return false;
+}
+
+function getDebugBrowserProcessIds() {
+    if (process.platform !== 'win32') {
+        return [];
+    }
+
+    try {
+        const output = execFileSync(
+            'wmic',
+            [
+                'process',
+                'where',
+                '(name="chrome.exe" or name="msedge.exe") and commandline like "%remote-debugging-port=9222%"',
+                'get',
+                'processid',
+                '/value'
+            ],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+        );
+        return [...output.matchAll(/ProcessId=(\d+)/gi)]
+            .map(match => Number(match[1]))
+            .filter(pid => Number.isInteger(pid) && pid > 0);
+    } catch (_) {
+        return [];
+    }
+}
+
+function stopDebugBrowserProcesses() {
+    const processIds = getDebugBrowserProcessIds();
+    for (const pid of processIds) {
+        try {
+            execFileSync(
+                'taskkill',
+                ['/PID', String(pid), '/T', '/F'],
+                { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true }
+            );
+            console.log(`[CDP] Stopped stale debug browser process: ${pid}`);
+        } catch (err) {
+            console.log(`[CDP] Failed to stop debug browser process ${pid}: ${err.message}`);
+        }
+    }
+    return processIds.length;
+}
+
+function shouldRestartChromeForCdpFallback() {
+    return process.platform === 'win32' && !String(process.env[CDP_ENDPOINT_ENV] || '').trim();
+}
+
+async function restartChromeForCdpFallback() {
+    if (!shouldRestartChromeForCdpFallback()) {
+        return false;
+    }
+
+    const browserPath = resolveCdpBrowserPath();
+    if (!browserPath) {
+        console.log('[CDP] Browser path not found; cannot restart debug browser automatically.');
+        return false;
+    }
+
+    console.log('[CDP] Restarting Chrome CDP browser after connection failure...');
+    const stoppedCount = stopDebugBrowserProcesses();
+    if (stoppedCount > 0) {
+        await sleep(3000);
+    }
+
+    const userDataArg = `--user-data-dir="${getCdpBrowserUserDataDir()}"`;
+    const args = [
+        '--remote-debugging-address=127.0.0.1',
+        '--remote-debugging-port=9222',
+        userDataArg,
+        '--start-maximized',
+        '--no-first-run',
+        '--no-default-browser-check'
+    ];
+
+    const child = spawn(browserPath, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+    });
+    child.unref();
+
+    const healthy = await waitForCdpEndpointHealth(getPrimaryCdpJsonVersionUrl(), 45000);
+    if (!healthy) {
+        console.log('[CDP] Debug browser restarted, but /json/version did not become healthy in time.');
+        return false;
+    }
+
+    console.log('[CDP] Debug browser restarted and CDP endpoint is healthy.');
+    return true;
+}
+
 // CDP 连接失败属于整批运行环境问题，遇到后不应继续盲跑下一条。
 function isCdpConnectionError(err) {
     const message = String((err && err.message) || '');
     return /connectOverCDP|ECONNREFUSED|9222|CDP/i.test(message);
 }
 
-// 连接用户已经打开的 Chrome，而不是启动新的无状态浏览器。
-async function connectBrowserOverCdp() {
-    const endpoints = getCdpEndpoints();
+async function tryConnectBrowserOverCdp(endpoints) {
     let lastError;
 
     for (const endpoint of endpoints) {
@@ -924,12 +1062,34 @@ async function connectBrowserOverCdp() {
         }
     }
 
-    throw new Error(
+    const error = new Error(
         `Could not connect to Chrome CDP. Tried: ${endpoints.join(', ')}. ` +
         'Please start Chrome with --remote-debugging-port=9222 and verify: ' +
-        'http://127.0.0.1:9222/json/version',
-        { cause: lastError }
+        'http://127.0.0.1:9222/json/version'
     );
+    error.cause = lastError;
+    throw error;
+}
+
+// 连接用户已经打开的 Chrome，而不是启动新的无状态浏览器。
+async function connectBrowserOverCdp() {
+    const endpoints = getCdpEndpoints();
+    try {
+        return await tryConnectBrowserOverCdp(endpoints);
+    } catch (firstError) {
+        const restarted = await restartChromeForCdpFallback();
+        if (!restarted) {
+            throw firstError;
+        }
+
+        console.log('Retrying Chrome CDP connection after browser restart...');
+        try {
+            return await tryConnectBrowserOverCdp(endpoints);
+        } catch (secondError) {
+            secondError.cause = secondError.cause || firstError;
+            throw secondError;
+        }
+    }
 }
 
 // 最大化窗口可减少响应式布局导致的按钮不可见或左侧导航折叠问题。
