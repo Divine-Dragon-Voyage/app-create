@@ -7,7 +7,7 @@ const script = fs.readFileSync(path.join(__dirname, '..', 'create_app.js'), 'utf
 
 test('create flow keeps copied seven-items and country fallbacks only', () => {
     assert.match(script, /ensureCreateAppDefaultLanguageEnUs/);
-    assert.match(script, /Executing declaration 2\/7: Sign in details/);
+    assert.match(script, /Executing declaration 2\/7: Sign-in details/);
     assert.match(script, /clickFinancialFeaturesSave/);
     assert.match(script, /Countries \/ regions tab not ready, using direct URL fallback/);
     assert.match(script, /Production page loaded but Countries\/regions controls are not visible yet; continuing with fallback navigation/);
