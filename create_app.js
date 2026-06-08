@@ -2515,13 +2515,27 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             }
         }
 
+        function getDeclarationTitleVariants(sectionTitle) {
+            const variants = [sectionTitle];
+            const normalizedTitle = String(sectionTitle || '').trim().toLowerCase();
+            if (normalizedTitle === 'sign-in details' || normalizedTitle === 'sign in details') {
+                variants.push('Sign-in details', 'Sign in details');
+            }
+            return [...new Set(variants)];
+        }
+
         // 在 App content 列表中打开指定声明项。
         async function clickStartDeclaration(sectionTitle) {
+            const sectionTitleVariants = getDeclarationTitleVariants(sectionTitle);
             const buttonByAria = page.locator(
-                `button[aria-label="Start ${sectionTitle} declaration"], button[aria-label*="Start ${sectionTitle} declaration"]`
+                sectionTitleVariants
+                    .map(title => `button[aria-label="Start ${title} declaration"], button[aria-label*="Start ${title} declaration"]`)
+                    .join(', ')
             ).first();
             const buttonByCard = page.locator(
-                `xpath=//*[normalize-space(text())="${sectionTitle}"]/ancestor::*[.//button[contains(normalize-space(.), "Start declaration")]][1]//button[contains(normalize-space(.), "Start declaration")]`
+                `xpath=${sectionTitleVariants
+                    .map(title => `//*[normalize-space(text())="${title}"]/ancestor::*[.//button[contains(normalize-space(.), "Start declaration")]][1]//button[contains(normalize-space(.), "Start declaration")]`)
+                    .join(' | ')}`
             ).first();
             await retryAction(async () => {
                 if (await buttonByAria.isVisible().catch(() => false)) {
@@ -5672,8 +5686,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         markStepDone(PROGRESS_STEP_ADS_DONE);
 
         await goToAppContent();
-        console.log('Executing declaration 2/7: Sign in details...');
-        await clickStartDeclaration('Sign in details');
+        console.log('Executing declaration 2/7: Sign-in details...');
+        await clickStartDeclaration('Sign-in details');
         await selectRadio(/^No/);
         await clickMainButton('Save');
         await waitSaved(page);
