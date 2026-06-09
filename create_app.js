@@ -21,6 +21,7 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS,
     DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT,
     DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS,
     DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
@@ -5712,18 +5713,34 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             const answerDataSafetyDeviceIdsUsage = async () => {
                 console.log('[DATA SAFETY] Answering Device or other IDs usage questions...');
                 const startAction = DATA_SAFETY_USAGE_ACTIONS.find(action => action.type === 'start');
-                await retryAction(async () => {
-                    const startButton = page.locator(
-                        'button[aria-label="Open Device or other IDs questions"], [role="button"][aria-label="Open Device or other IDs questions"]'
-                    ).first();
-                    if (await startButton.isVisible().catch(() => false)) {
-                        await clickLocatorRobust(startButton, 'Device or other IDs Start button', 10000);
-                        return;
+                const clickDeviceIdsQuestionsEntry = async () => {
+                    for (const selector of DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS) {
+                        const candidates = await page.locator(selector).all().catch(() => []);
+                        for (let i = 0; i < candidates.length; i++) {
+                            const candidate = candidates[i];
+                            if (!(await candidate.isVisible().catch(() => false))) {
+                                continue;
+                            }
+                            await clickLocatorRobust(candidate, `Device or other IDs questions entry (${selector})`, 10000);
+                            console.log(`[DATA SAFETY] Opened Device or other IDs questions with selector: ${selector}`);
+                            return;
+                        }
                     }
-                    const fallback = page.locator('button, [role="button"]').filter({
-                        hasText: /^Start$/i
-                    }).first();
-                    await clickLocatorRobust(fallback, 'Device or other IDs Start button', 10000);
+
+                    const rowActionButton = page.locator('div[role="row"], .particle-table-row')
+                        .filter({ hasText: /Device or other IDs/i })
+                        .locator(
+                            'ess-cell[essfield="action"] button, ' +
+                            'button[aria-label="Open Device or other IDs questions"], ' +
+                            'button:has(material-icon:has-text("arrow_right_alt"))'
+                        )
+                        .last();
+                    await clickLocatorRobust(rowActionButton, 'Device or other IDs row action button', 10000);
+                    console.log('[DATA SAFETY] Opened Device or other IDs questions from row action fallback.');
+                };
+
+                await retryAction(async () => {
+                    await clickDeviceIdsQuestionsEntry();
                 }, startAction.label, 4);
                 await delay(page, 3000);
 

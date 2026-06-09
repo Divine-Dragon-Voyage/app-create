@@ -4,6 +4,7 @@ const {
     DATA_SAFETY_COLLECTION_SECURITY_ACTIONS,
     DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
+    DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS,
     DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT,
     DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS,
     DATA_SAFETY_USAGE_ACTIONS,
@@ -127,6 +128,15 @@ test('device or other ids usage answers collected ephemeral required app functio
             { type: 'save', label: 'Save' }
         ]
     );
+});
+
+test('device or other ids question entry supports aria label and arrow action fallbacks', () => {
+    assert.ok(DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS.includes(
+        'button[aria-label="Open Device or other IDs questions"]'
+    ));
+    assert.ok(DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS.some(selector => selector.includes('essfield="action"')));
+    assert.ok(DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS.some(selector => selector.includes('arrow_right_alt')));
+    assert.ok(DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS.some(selector => selector.includes(':has-text("Start")')));
 });
 
 test('data collection account creation controls use stable debug selectors', () => {
