@@ -100,6 +100,17 @@ const DATA_SAFETY_USAGE_ACTIONS = [
     }
 ];
 
+const DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS = [
+    'button[aria-label="Open Device or other IDs questions"]',
+    '[role="button"][aria-label="Open Device or other IDs questions"]',
+    'ess-cell[essfield="action"] button[aria-label="Open Device or other IDs questions"]',
+    'ess-cell[essfield="action"] button:has-text("Start")',
+    'ess-cell[essfield="action"] button:has(material-icon:has-text("arrow_right_alt"))',
+    'button:has(material-icon:has-text("arrow_right_alt"))',
+    'button:has-text("Start")',
+    '[role="button"]:has-text("Start")'
+];
+
 const DATA_SAFETY_ACCOUNT_CREATION_CHECKBOX_SELECTORS = [
     'material-checkbox[debug-id="acm-checkboxes"]',
     'material-checkbox:has(label:has-text("My app does not allow users to create an account"))',
@@ -134,6 +145,7 @@ module.exports = {
     DATA_SAFETY_COLLECTION_SECURITY_STEP_SELECTOR,
     DATA_SAFETY_DATA_TYPES_ACTIONS,
     DATA_SAFETY_DEVICE_IDS_CHECKBOX_TEXT,
+    DATA_SAFETY_DEVICE_IDS_QUESTION_BUTTON_SELECTORS,
     DATA_SAFETY_DEVICE_IDS_SYNC_WAIT_MS,
     DATA_SAFETY_PRIMARY_NEXT_BUTTON_SELECTOR,
     DATA_SAFETY_NEXT_BUTTON_SELECTORS,
