@@ -11,6 +11,19 @@ TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t app-create-pack)"
 STAGING_DIR="$TMP_DIR/staging"
 mkdir -p "$STAGING_DIR"
 
+resolve_release_version() {
+  local date_tag="$1"
+  local commit=""
+  if command -v git >/dev/null 2>&1; then
+    commit="$(cd "$SCRIPT_DIR" && git rev-parse --short HEAD 2>/dev/null || true)"
+  fi
+  if [[ -n "$commit" ]]; then
+    printf 'git:%s built:%s\n' "$commit" "$date_tag"
+  else
+    printf 'built:%s\n' "$date_tag"
+  fi
+}
+
 FILES=(
   "README.md"
   "WORKFLOW.md"
@@ -64,6 +77,8 @@ for dir in "${DIRS[@]}"; do
 done
 
 DATE_TAG="$(date +%Y%m%d-%H%M%S)"
+VERSION_TEXT="$(resolve_release_version "$DATE_TAG")"
+printf '%s\n' "$VERSION_TEXT" > "$STAGING_DIR/VERSION"
 VERSION_ZIP="$OUTPUT_DIR/${RELEASE_NAME}-${DATE_TAG}.zip"
 LATEST_ZIP="$OUTPUT_DIR/${RELEASE_NAME}-latest.zip"
 

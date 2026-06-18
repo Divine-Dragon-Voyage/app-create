@@ -14,6 +14,30 @@ function Ensure-Directory {
     }
 }
 
+function Resolve-ReleaseVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectDir,
+        [Parameter(Mandatory = $true)][string]$DateTag
+    )
+
+    $commit = ""
+    Push-Location $ProjectDir
+    try {
+        $commit = (git rev-parse --short HEAD 2>$null | Select-Object -First 1)
+    }
+    catch {
+        $commit = ""
+    }
+    finally {
+        Pop-Location
+    }
+
+    if ($commit) {
+        return "git:$commit built:$DateTag"
+    }
+    return "built:$DateTag"
+}
+
 function Main {
     $projectDir = Split-Path -Parent $PSCommandPath
     Ensure-Directory -PathValue $OutputDir
@@ -91,6 +115,9 @@ function Main {
         }
 
         $dateTag = Get-Date -Format "yyyyMMdd-HHmmss"
+        $versionText = Resolve-ReleaseVersion -ProjectDir $projectDir -DateTag $dateTag
+        Set-Content -Path (Join-Path $stagingDir "VERSION") -Value $versionText -Encoding UTF8
+
         $versionZip = Join-Path $outputDirAbs ($ReleaseName + "-" + $dateTag + ".zip")
         $latestZip = Join-Path $outputDirAbs ($ReleaseName + "-latest.zip")
 

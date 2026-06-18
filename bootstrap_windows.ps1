@@ -10,6 +10,7 @@
     [switch]$RunApp,
     [string]$ExcelFile = "",
     [string]$DeveloperUrl = "",
+    [string]$ContactEmail = $env:APP_CREATE_CONTACT_EMAIL,
     [switch]$HoldWindowOnSuccess
 )
 
@@ -20,6 +21,7 @@ $ProgressPreference = "SilentlyContinue"
 $script:ResolvedNodeCommand = "node"
 $script:ResolvedNpmCommand = "npm"
 $script:ResolvedNodeSource = "system-path"
+$script:ResolvedBrowserUserDataDir = ""
 
 function Write-Step {
     param([string]$Message)
@@ -78,6 +80,36 @@ function Ensure-Directory {
     }
 }
 
+function Get-SafeProfileName {
+    param([string]$Value)
+
+    $safe = ([string]$Value).Trim().ToLowerInvariant() -replace '[^a-z0-9._-]+', '_'
+    $safe = $safe.Trim('_')
+    if ($safe.Length -gt 80) {
+        $safe = $safe.Substring(0, 80)
+    }
+    if (-not $safe) {
+        return "default"
+    }
+    return $safe
+}
+
+function Resolve-BrowserUserDataDir {
+    $baseDir = if ($BrowserUserDataDir) { $BrowserUserDataDir } else { "C:\chrome-cdp-app-create" }
+    $safeProfileName = Get-SafeProfileName -Value $ContactEmail
+    if ((Split-Path -Leaf $baseDir) -eq $safeProfileName) {
+        return $baseDir
+    }
+    return Join-Path $baseDir $safeProfileName
+}
+
+function Get-ResolvedBrowserUserDataDir {
+    if ($script:ResolvedBrowserUserDataDir) {
+        return $script:ResolvedBrowserUserDataDir
+    }
+    return Resolve-BrowserUserDataDir
+}
+
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -97,7 +129,7 @@ function Ensure-Admin {
         "-NodeVersion", $NodeVersion,
         "-CdpPort", $CdpPort,
         "-CdpWaitSeconds", $CdpWaitSeconds,
-        "-BrowserUserDataDir", "`"$BrowserUserDataDir`""
+        "-BrowserUserDataDir", "`"$(Get-ResolvedBrowserUserDataDir)`""
     )
     if ($SkipCdpCheck) {
         $argList += "-SkipCdpCheck"
@@ -119,6 +151,9 @@ function Ensure-Admin {
     }
     if ($DeveloperUrl) {
         $argList += @("-DeveloperUrl", "`"$DeveloperUrl`"")
+    }
+    if ($ContactEmail) {
+        $argList += @("-ContactEmail", "`"$ContactEmail`"")
     }
     if ($HoldWindowOnSuccess) {
         $argList += "-HoldWindowOnSuccess"
@@ -570,11 +605,14 @@ function Launch-BrowserWithCdp {
         return $false
     }
 
+    $resolvedUserDataDir = Get-ResolvedBrowserUserDataDir
+    Ensure-Directory -PathValue $resolvedUserDataDir
     Write-Step "Launching browser with CDP: $resolvedBrowserPath"
+    Write-Step "Chrome user data dir: $resolvedUserDataDir"
     $args = @(
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=$CdpPort",
-        "--user-data-dir=`"$BrowserUserDataDir`"",
+        "--user-data-dir=`"$resolvedUserDataDir`"",
         "--start-maximized",
         "--no-first-run",
         "--no-default-browser-check"
@@ -654,7 +692,13 @@ function Invoke-AppCreation {
     Write-Step "Running app task with Node source: $($script:ResolvedNodeSource)"
     Push-Location $ProjectDir
     $previousDeveloperUrl = $env:APP_CREATE_DEVELOPER_URL
+    $previousBrowserUserDataDir = $env:APP_CREATE_BROWSER_USER_DATA_DIR
+    $previousContactEmail = $env:APP_CREATE_CONTACT_EMAIL
     try {
+        $env:APP_CREATE_BROWSER_USER_DATA_DIR = Get-ResolvedBrowserUserDataDir
+        if ($ContactEmail) {
+            $env:APP_CREATE_CONTACT_EMAIL = $ContactEmail
+        }
         if ($DeveloperConsoleUrl) {
             # 每次运行按用户输入覆盖开发者入口，避免手工改配置文件。
             $env:APP_CREATE_DEVELOPER_URL = $DeveloperConsoleUrl
@@ -671,6 +715,16 @@ function Invoke-AppCreation {
         } else {
             Remove-Item Env:APP_CREATE_DEVELOPER_URL -ErrorAction SilentlyContinue
         }
+        if ($null -ne $previousBrowserUserDataDir) {
+            $env:APP_CREATE_BROWSER_USER_DATA_DIR = $previousBrowserUserDataDir
+        } else {
+            Remove-Item Env:APP_CREATE_BROWSER_USER_DATA_DIR -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $previousContactEmail) {
+            $env:APP_CREATE_CONTACT_EMAIL = $previousContactEmail
+        } else {
+            Remove-Item Env:APP_CREATE_CONTACT_EMAIL -ErrorAction SilentlyContinue
+        }
         Pop-Location
     }
 }
@@ -684,6 +738,13 @@ function Main {
     }
     if ($CdpWaitSeconds -lt 1) {
         throw "CdpWaitSeconds must be >= 1."
+    }
+
+    $script:ResolvedBrowserUserDataDir = Resolve-BrowserUserDataDir
+    Ensure-Directory -PathValue $script:ResolvedBrowserUserDataDir
+    $env:APP_CREATE_BROWSER_USER_DATA_DIR = $script:ResolvedBrowserUserDataDir
+    if ($ContactEmail) {
+        $env:APP_CREATE_CONTACT_EMAIL = $ContactEmail
     }
 
     Ensure-Admin

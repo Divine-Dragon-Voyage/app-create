@@ -113,6 +113,12 @@ const WEB_USERNAME_ENV = 'APP_CREATE_WEB_USERNAME';
 const WEB_PASSWORD_ENV = 'APP_CREATE_WEB_PASSWORD';
 const CONTACT_EMAIL_ENV = 'APP_CREATE_CONTACT_EMAIL';
 const DEFAULT_LOGIN_WAIT_SECONDS = 900;
+const VERSION_FILE_NAME = 'VERSION';
+const DEFAULT_CDP_BROWSER_USER_DATA_BASE_DIR = 'C:\\chrome-cdp-app-create';
+const RUN_LOCK_FILE_NAME = 'app-create-run.lock';
+const RUN_LOCK_STALE_MS = 12 * 60 * 60 * 1000;
+const CDP_HEALTH_CHECK_INTERVAL_ROWS = 3;
+const CHROME_PROFILE_LOCK_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
 
 // 任务状态：PARTIAL 表示任务已开始但未完成；NEED_FIX 表示需要人工介入。
 const STATUS_HEADER_CANDIDATES = new Set(['status', '\u72B6\u6001']);
@@ -177,6 +183,37 @@ function normalizeHeader(value) {
         .trim()
         .toLowerCase()
         .replace(/[\s_-]/g, '');
+}
+
+function loadRuntimeVersionInfo() {
+    const versionPath = path.resolve(__dirname, VERSION_FILE_NAME);
+    try {
+        const text = fs.readFileSync(versionPath, 'utf8').trim();
+        if (text) {
+            return text.split(/\r?\n/)[0].trim();
+        }
+    } catch (_) {
+        // Zip installs do not carry .git metadata; VERSION is best effort.
+    }
+    return 'unknown';
+}
+
+function logRuntimeVersionInfo() {
+    console.log(`[VERSION] app-create ${loadRuntimeVersionInfo()}`);
+}
+
+function sanitizeProfileKey(value) {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80);
+    return normalized || 'default';
+}
+
+function getCdpBrowserProfileKey() {
+    return sanitizeProfileKey(process.env[CONTACT_EMAIL_ENV] || 'default');
 }
 
 // 解析命令行输入文件路径：启动器通常传入显式路径，命令行也可省略后自动找根目录数据文件。
@@ -915,7 +952,106 @@ function getPrimaryCdpJsonVersionUrl() {
 
 function getCdpBrowserUserDataDir() {
     const configured = String(process.env[CDP_BROWSER_USER_DATA_DIR_ENV] || '').trim();
-    return configured || 'C:\\chrome-cdp-app-create';
+    if (configured) {
+        return path.resolve(configured);
+    }
+    const baseDir = DEFAULT_CDP_BROWSER_USER_DATA_BASE_DIR;
+    const profileKey = getCdpBrowserProfileKey();
+    return path.join(baseDir, profileKey);
+}
+
+function getRunLockPath() {
+    return path.join(getCdpBrowserUserDataDir(), RUN_LOCK_FILE_NAME);
+}
+
+function isProcessAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) {
+        return false;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function acquireRunLock() {
+    const userDataDir = getCdpBrowserUserDataDir();
+    fs.mkdirSync(userDataDir, { recursive: true });
+    const lockPath = getRunLockPath();
+    const now = Date.now();
+
+    if (fs.existsSync(lockPath)) {
+        let existing = {};
+        try {
+            existing = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        } catch (_) {
+            existing = {};
+        }
+        const existingPid = Number(existing.pid || 0);
+        const lockedAtMs = Date.parse(existing.lockedAt || '') || 0;
+        const stale = !isProcessAlive(existingPid) || (lockedAtMs > 0 && now - lockedAtMs > RUN_LOCK_STALE_MS);
+        if (!stale) {
+            const error = new Error(
+                `Another app-create run appears active for Chrome profile "${getCdpBrowserProfileKey()}". ` +
+                `PID=${existingPid || 'unknown'}, lock=${lockPath}`
+            );
+            error.stopRun = true;
+            throw error;
+        }
+        console.log(`[LOCK] Removing stale run lock: ${lockPath}`);
+        fs.rmSync(lockPath, { force: true });
+    }
+
+    const payload = {
+        pid: process.pid,
+        profileKey: getCdpBrowserProfileKey(),
+        lockedAt: new Date(now).toISOString()
+    };
+    fs.writeFileSync(lockPath, JSON.stringify(payload, null, 2), { encoding: 'utf8', flag: 'wx' });
+    console.log(`[LOCK] Acquired run lock: ${lockPath}`);
+    return lockPath;
+}
+
+function releaseRunLock(lockPath) {
+    if (!lockPath) {
+        return;
+    }
+    try {
+        fs.rmSync(lockPath, { force: true });
+        console.log(`[LOCK] Released run lock: ${lockPath}`);
+    } catch (err) {
+        console.log(`[LOCK] Could not release run lock (${lockPath}): ${err.message}`);
+    }
+}
+
+function hasChromeProfileLockFiles(userDataDir = getCdpBrowserUserDataDir()) {
+    return CHROME_PROFILE_LOCK_FILES.some(fileName => fs.existsSync(path.join(userDataDir, fileName)));
+}
+
+async function waitForDebugBrowserProcessesToExit(timeoutMs = 30000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        const processIds = getDebugBrowserProcessIds();
+        if (!processIds.length) {
+            return true;
+        }
+        await sleep(1000);
+    }
+    return getDebugBrowserProcessIds().length === 0;
+}
+
+async function waitForChromeProfileReady(timeoutMs = 30000) {
+    const userDataDir = getCdpBrowserUserDataDir();
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        if (!hasChromeProfileLockFiles(userDataDir)) {
+            return true;
+        }
+        await sleep(1000);
+    }
+    return !hasChromeProfileLockFiles(userDataDir);
 }
 
 function getCdpBrowserPathCandidates() {
@@ -950,6 +1086,29 @@ async function waitForCdpEndpointHealth(url, timeoutMs = 45000) {
         await sleep(1000);
     }
     return false;
+}
+
+function shouldRunInterIterationCdpHealthCheck(completedRows, totalRows) {
+    return completedRows > 0
+        && completedRows < totalRows
+        && completedRows % CDP_HEALTH_CHECK_INTERVAL_ROWS === 0;
+}
+
+async function runInterIterationCdpHealthCheck(completedRows) {
+    console.log(`[CDP] Running controlled health check after completed row ${completedRows}...`);
+    const healthy = await waitForCdpEndpointHealth(getPrimaryCdpJsonVersionUrl(), 10000);
+    if (healthy) {
+        console.log('[CDP] Health check passed.');
+        return;
+    }
+
+    console.log('[CDP] Health check failed; attempting controlled browser restart.');
+    const restarted = await restartChromeForCdpFallback();
+    if (!restarted) {
+        const error = new Error('CDP health check failed between iterations.');
+        error.stopRun = true;
+        throw error;
+    }
 }
 
 function getDebugBrowserProcessIds() {
@@ -1013,7 +1172,19 @@ async function restartChromeForCdpFallback() {
     console.log('[CDP] Restarting Chrome CDP browser after connection failure...');
     const stoppedCount = stopDebugBrowserProcesses();
     if (stoppedCount > 0) {
-        await sleep(3000);
+        console.log('[CDP] Waiting for stale debug browser processes to exit...');
+        const exited = await waitForDebugBrowserProcessesToExit(30000);
+        if (!exited) {
+            console.log('[CDP] Stale debug browser processes did not exit in time.');
+            return false;
+        }
+    }
+
+    console.log('[CDP] Waiting for Chrome profile lock release...');
+    const profileReady = await waitForChromeProfileReady(30000);
+    if (!profileReady) {
+        console.log(`[CDP] Chrome profile is still locked: ${getCdpBrowserUserDataDir()}`);
+        return false;
     }
 
     const userDataArg = `--user-data-dir="${getCdpBrowserUserDataDir()}"`;
@@ -1929,6 +2100,73 @@ async function openAppGenieDetailsAndReadPrivacyText(context, task, runtimeOptio
     return privacyText;
 }
 
+async function classifyGoogleSitesPage(sitesPage) {
+    return await sitesPage.evaluate(() => {
+        const text = String(document.body ? document.body.innerText : '').replace(/\s+/g, ' ').trim();
+        const url = String(window.location.href || '');
+        const title = String(document.title || '');
+        const hasTemplateChooser = /template|blank site|空白/i.test(text);
+        const hasEditor = /\/edit(?:[/?#]|$)/i.test(window.location.pathname)
+            || !!document.querySelector('div[contenteditable="true"][role="textbox"]');
+        const hasPublish = Array.from(document.querySelectorAll('button, div[role="button"]')).some(el =>
+            /\bPublish\b/i.test((el.textContent || '').trim())
+        );
+        const hasLogin = /accounts\.google\.com/i.test(url) || /sign in|登录/i.test(text);
+
+        let state = 'unknown';
+        if (hasEditor || hasPublish) {
+            state = 'editor';
+        } else if (hasTemplateChooser) {
+            state = 'template-chooser';
+        } else if (hasLogin) {
+            state = 'login';
+        } else if (!text) {
+            state = 'blank';
+        }
+
+        return {
+            state,
+            url,
+            title,
+            textSample: text.slice(0, 500)
+        };
+    }).catch(err => ({
+        state: 'unavailable',
+        url: '',
+        title: '',
+        textSample: String((err && err.message) || err || '')
+    }));
+}
+
+async function captureGoogleSitesDiagnostics(sitesPage, task, reason = 'editor-timeout') {
+    const diagnosticsDir = path.resolve(resolveConfigDirectory(), 'diagnostics');
+    fs.mkdirSync(diagnosticsDir, { recursive: true });
+
+    const taskKey = sanitizeProfileKey(task.packageName || task.appName || 'unknown');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const screenshotPath = path.join(diagnosticsDir, `google-sites-${taskKey}-${timestamp}.png`);
+    const pageState = await classifyGoogleSitesPage(sitesPage);
+
+    let screenshotSaved = false;
+    try {
+        await sitesPage.screenshot({ path: screenshotPath, fullPage: true });
+        screenshotSaved = true;
+    } catch (err) {
+        console.log(`[SITES] Could not save diagnostics screenshot: ${err.message}`);
+    }
+
+    console.log(
+        `[SITES] Diagnostics captured for ${reason}: ` +
+        `state=${pageState.state}, url=${pageState.url || sitesPage.url()}, ` +
+        `screenshot=${screenshotSaved ? screenshotPath : 'not saved'}`
+    );
+
+    return {
+        ...pageState,
+        screenshotPath: screenshotSaved ? screenshotPath : ''
+    };
+}
+
 // 在 Google Sites 创建隐私政策站点，发布后返回可预测的公开 URL。
 async function createAndPublishGoogleSite(context, task, privacyText) {
     const { page: sitesPage, source } = await createFreshAuxPage(
@@ -1942,17 +2180,26 @@ async function createAndPublishGoogleSite(context, task, privacyText) {
     await randomDelay(sitesPage, 800, 1800);
 
     const waitSitesEditorReady = async (timeoutMs = 90000) => {
-        await sitesPage.waitForFunction(() => {
-            const urlReady = /\/edit(?:[/?#]|$)/i.test(String(window.location.pathname || ''));
-            const hasDocNameInput = !!document.querySelector(
-                '#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd'
+        try {
+            await sitesPage.waitForFunction(() => {
+                const urlReady = /\/edit(?:[/?#]|$)/i.test(String(window.location.pathname || ''));
+                const hasDocNameInput = !!document.querySelector(
+                    '#i3, input#i3, input[aria-labelledby*="Loading name"], input.VfPpkd-fmcmS-wGMbrd'
+                );
+                const hasEditableText = !!document.querySelector('div[contenteditable="true"][role="textbox"]');
+                const hasPublish = Array.from(document.querySelectorAll('button, div[role="button"]')).some(el =>
+                    /\bPublish\b/i.test((el.textContent || '').trim())
+                );
+                return urlReady || hasDocNameInput || hasEditableText || hasPublish;
+            }, { timeout: timeoutMs });
+        } catch (err) {
+            const diagnostics = await captureGoogleSitesDiagnostics(sitesPage, task, 'editor-ready-timeout');
+            throw new Error(
+                `Google Sites editor did not become ready. ` +
+                `state=${diagnostics.state}, url=${diagnostics.url || sitesPage.url()}, ` +
+                `screenshot=${diagnostics.screenshotPath || 'not saved'}, cause=${err.message}`
             );
-            const hasEditableText = !!document.querySelector('div[contenteditable="true"][role="textbox"]');
-            const hasPublish = Array.from(document.querySelectorAll('button, div[role="button"]')).some(el =>
-                /\bPublish\b/i.test((el.textContent || '').trim())
-            );
-            return urlReady || hasDocNameInput || hasEditableText || hasPublish;
-        }, { timeout: timeoutMs });
+        }
     };
 
     const titleInput = sitesPage.locator(
@@ -6126,6 +6373,7 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
 
 // 程序入口：准备配置、读取任务、逐条执行，并在最后输出批次汇总。
 (async () => {
+    logRuntimeVersionInfo();
     const { inputFileArg } = parseCliArgs();
     const runtimeOptions = getRuntimeOptions();
     const { appListUrl, configPath } = loadDeveloperConsoleAppListUrl();
@@ -6151,6 +6399,8 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
         return;
     }
 
+    const runLockPath = acquireRunLock();
+    try {
     // 批次统计只记录本次运行结果，不影响 Excel/CSV 中的持久状态。
     const runStats = {
         totalLoaded: tasks.length,
@@ -6233,6 +6483,10 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             );
         }
 
+        if (shouldRunInterIterationCdpHealthCheck(i + 1, selectedTasks.length)) {
+            await runInterIterationCdpHealthCheck(i + 1);
+        }
+
         if (i < selectedTasks.length - 1) {
             const wait = 15000 + Math.random() * 10000;
             console.log('Wait until next iteration:', formatDuration(Math.round(wait / 1000)));
@@ -6294,6 +6548,9 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
     console.log(coloredSummaryText);
     console.log('=============================================');
     writeRunSummaryFile(summaryPayload);
+    } finally {
+        releaseRunLock(runLockPath);
+    }
 })().catch(err => {
     console.error(`[INIT ERROR] ${err.message}`);
     process.exit(1);
