@@ -61,6 +61,10 @@ const {
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
     APPGENIE_REVIEW_SHA1_INPUT_SELECTOR,
     APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS,
+    PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX,
+    PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_SELECTOR,
+    PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX,
+    PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX,
     PLAY_PROTECTED_WITH_PLAY_PATH,
     PLAY_RELEASES_OVERVIEW_PATH,
     buildReviewScreenshotPath,
@@ -4196,29 +4200,27 @@ async function runOnce(task, appListUrl, statusManager, runtimeOptions) {
             await page.waitForLoadState('load', { timeout: 60000 }).catch(() => { });
             await randomDelay(page, 5000, 7000);
 
-            const sendForReviewButton = page.locator(
-                'button[debug-id="send-for-review-button"], [role="button"][debug-id="send-for-review-button"]'
-            ).filter({
-                hasText: /Send\s+\d+\s+changes?\s+for\s+review/i
+            const sendForReviewButton = page.locator(PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_SELECTOR).filter({
+                hasText: PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX
             }).first();
 
             console.log('[RELEASE] Sending changes for review...');
             await retryAction(async () => {
                 await sendForReviewButton.waitFor({ state: 'visible', timeout: 90000 });
                 if (await isLocatorDisabled(sendForReviewButton)) {
-                    throw new Error('Send changes for review button is disabled.');
+                    throw new Error('Send/Submit changes for review button is disabled.');
                 }
-                await clickLocatorRobust(sendForReviewButton, 'Send changes for review button', 15000);
-            }, 'Click Send changes for review', 5);
+                await clickLocatorRobust(sendForReviewButton, 'Send/Submit changes for review button', 15000);
+            }, 'Click Send/Submit changes for review', 5);
             await randomDelay(page, 3000, 5000);
 
             const sendDialog = page.locator('div[role="dialog"], div[aria-modal="true"]').filter({
-                hasText: /Send\s+\d+\s+changes?\s+for\s+review|These changes will be sent/i
+                hasText: PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX
             }).first();
             const confirmButton = sendDialog.locator(
                 'button[debug-id="yes-button"], [role="button"][debug-id="yes-button"]'
             ).filter({
-                hasText: /^Send changes for review$/i
+                hasText: PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX
             }).first();
 
             console.log('[RELEASE] Confirming send changes for review dialog...');

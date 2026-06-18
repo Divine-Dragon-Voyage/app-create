@@ -44,6 +44,10 @@ const APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS = [
     '.ant-modal button.ant-btn-primary',
     'button.ant-btn-primary'
 ];
+const PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_SELECTOR = 'button[debug-id="send-for-review-button"], [role="button"][debug-id="send-for-review-button"]';
+const PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX = /(?:Send|Submit)\s+\d+\s+changes?\s+for\s+review/i;
+const PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX = /(?:Send|Submit)\s+\d+\s+changes?\s+for\s+review|These changes will be sent/i;
+const PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX = /^(?:Send|Submit)\s+changes?\s+for\s+review$/i;
 
 function normalizeReviewFileToken(value) {
     return String(value || 'app')
@@ -70,6 +74,10 @@ module.exports = {
     APPGENIE_REVIEW_FILE_INPUT_SELECTOR,
     APPGENIE_REVIEW_SHA1_INPUT_SELECTOR,
     APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS,
+    PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX,
+    PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_SELECTOR,
+    PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX,
+    PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX,
     LATEST_RELEASES_SCREENSHOT_NAME,
     PLAY_PROTECTED_WITH_PLAY_PATH,
     PLAY_RELEASES_OVERVIEW_PATH,

@@ -11,6 +11,9 @@ const {
     APPGENIE_REVIEW_SHA1_INPUT_SELECTOR,
     APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS,
     LATEST_RELEASES_SCREENSHOT_NAME,
+    PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX,
+    PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX,
+    PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX,
     PLAY_PROTECTED_WITH_PLAY_PATH,
     PLAY_RELEASES_OVERVIEW_PATH,
     extractSha1Fingerprint,
@@ -55,6 +58,15 @@ test('review submission selectors cover Play and AppGenie controls', () => {
     assert.equal(APPGENIE_REVIEW_FILE_INPUT_SELECTOR, '.ant-modal input[type="file"][accept*="image"]');
     assert.ok(APPGENIE_REVIEW_SHA1_INPUT_SELECTOR.includes('SHA1'));
     assert.ok(APPGENIE_REVIEW_SUBMIT_BUTTON_SELECTORS.some(selector => selector.includes('ant-btn-primary')));
+});
+
+test('play release send-for-review selectors accept both Send and Submit wording', () => {
+    assert.match('Send 11 changes for review', PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX);
+    assert.match('Submit 11 changes for review', PLAY_RELEASE_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX);
+    assert.match('Send 11 changes for review', PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX);
+    assert.match('Submit 11 changes for review', PLAY_RELEASE_SEND_FOR_REVIEW_DIALOG_TEXT_REGEX);
+    assert.match('Send changes for review', PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX);
+    assert.match('Submit changes for review', PLAY_RELEASE_CONFIRM_SEND_FOR_REVIEW_BUTTON_TEXT_REGEX);
 });
 
 test('app signing manage selectors are scoped to Play Store protection app signing row', () => {
