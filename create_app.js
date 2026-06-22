@@ -1187,7 +1187,7 @@ async function restartChromeForCdpFallback() {
         return false;
     }
 
-    const userDataArg = `--user-data-dir="${getCdpBrowserUserDataDir()}"`;
+    const userDataArg = `--user-data-dir=${getCdpBrowserUserDataDir()}`;
     const args = [
         '--remote-debugging-address=127.0.0.1',
         '--remote-debugging-port=9222',

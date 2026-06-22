@@ -10,7 +10,8 @@ test('CDP connection fallback restarts debug browser before final failure', () =
     assert.match(createAppSource, /await restartChromeForCdpFallback\(\)/);
     assert.match(createAppSource, /Retrying Chrome CDP connection after browser restart/);
     assert.match(createAppSource, /--remote-debugging-port=9222/);
-    assert.match(createAppSource, /--user-data-dir="\$\{getCdpBrowserUserDataDir\(\)\}"/);
+    assert.match(createAppSource, /`--user-data-dir=\$\{getCdpBrowserUserDataDir\(\)\}`/);
+    assert.doesNotMatch(createAppSource, /`--user-data-dir="\$\{getCdpBrowserUserDataDir\(\)\}"`/);
     assert.match(createAppSource, /await waitForCdpEndpointHealth\(getPrimaryCdpJsonVersionUrl\(\)/);
 });
 
